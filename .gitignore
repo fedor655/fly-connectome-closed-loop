@@ -1,0 +1,21 @@
+# Сторонние репозитории — у каждого свой .git и своя лицензия.
+# Их не публикуем, а подтягиваем отдельно (см. README).
+fly-brain/
+flygym/
+neuromechfly/
+
+# Кэши пакетных менеджеров
+conda-pkgs/
+pip-cache/
+
+# Тяжёлые данные коннектома (~763 МБ) живут в ~/fly-brain-data,
+# скачиваются отдельно и в git им не место
+*.parquet
+*.pkl
+weight_coo.pkl
+weight_csr.pkl
+
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/

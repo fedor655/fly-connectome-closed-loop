@@ -1,0 +1,3 @@
+tag,total_spikes,active_neurons,pop_rate_hz,p9_left_hz,p9_right_hz
+A. ЭТАЛОН (run_pytorch.TorchModel),17291,412,0.12471959549621679,0.0,0.0
+B. MVP (closed_loop_mvp.BrainNetwork),20816218,102082,150.14691392753844,100.0,431.0
