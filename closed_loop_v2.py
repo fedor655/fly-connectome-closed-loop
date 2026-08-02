@@ -87,8 +87,16 @@ FB_SPAN_HZ = 150.0
 OPEN_LOOP_DUTY = 0.68
 
 
-def build_brain(device):
-    """Загрузка коннектома, поиск драйверов P9, сборка валидированной модели."""
+def build_brain(device, input_level=1):
+    """Загрузка коннектома, поиск драйверов P9, сборка валидированной модели.
+
+    input_level=1 — вход подаётся в прямых возбуждающих партнёров P9 (1 синапс).
+    input_level=2 — на синапс выше: в партнёров этих партнёров. Вход становится
+    менее рукотворным, между сенсором и командой появляются два слоя реальных
+    вычислений коннектома. Измерено в tools/p9_upstream_levels.py: со второго
+    этажа P9 управляется (52-107 Гц), с третьего сигнал умирает (0-6 Гц),
+    поэтому глубже подниматься бессмысленно.
+    """
     print("[мозг] читаю список нейронов...")
     df_comp = pd.read_csv(path_comp, index_col=0)
     flyid2i = {j: i for i, j in enumerate(df_comp.index)}
@@ -114,11 +122,41 @@ def build_brain(device):
         order = np.argsort(-vals)[:N_DRIVERS]
         return cols[order].tolist(), vals[order].tolist()
 
+    def top_upstream(targets, exclude):
+        """Топ-N возбуждающих партнёров для набора targets, веса суммируются."""
+        scores = {}
+        for t in targets:
+            row = W.getrow(int(t)).tocoo()
+            for col, val in zip(row.col, row.data):
+                c = int(col)
+                if val > 0 and c not in exclude:
+                    scores[c] = scores.get(c, 0.0) + float(val)
+        ranked = sorted(scores.items(), key=lambda kv: -kv[1])[:N_DRIVERS]
+        return [c for c, _ in ranked], [v for _, v in ranked]
+
     drv_l, w_l = top_drivers(idx_l)
     drv_r, w_r = top_drivers(idx_r)
+
+    if input_level >= 2:
+        # Второй этаж считаем для каждой стороны отдельно и с взаимным
+        # исключением, иначе стороны сольются и поворот кодировать будет нечем.
+        # Оба канала отбираем по одному и тому же правилу. Раньше правый набор
+        # дополнительно исключал уже выбранный левый, из-за чего каналы выходили
+        # асимметричными (замер: левый 64 Гц против правого 117 Гц при том же
+        # входе). Симметричное правило важнее непересечения.
+        base_l, base_r = set(drv_l), set(drv_r)
+        p9_both = {idx_l, idx_r}
+        excl = p9_both | base_l | base_r
+        drv_l, w_l = top_upstream(base_l, exclude=excl)
+        drv_r, w_r = top_upstream(base_r, exclude=excl)
+
     del W
-    print(f"[мозг] драйверы P9 left:  {len(drv_l)} шт, веса {w_l[0]:.0f}..{w_l[-1]:.0f}")
-    print(f"[мозг] драйверы P9 right: {len(drv_r)} шт, веса {w_r[0]:.0f}..{w_r[-1]:.0f}")
+    lvl = f"L{input_level}"
+    print(f"[мозг] вход уровня {lvl}, левый канал:  {len(drv_l)} шт, "
+          f"веса {w_l[0]:.0f}..{w_l[-1]:.0f}")
+    print(f"[мозг] вход уровня {lvl}, правый канал: {len(drv_r)} шт, "
+          f"веса {w_r[0]:.0f}..{w_r[-1]:.0f}")
+    print(f"[мозг] пересечение каналов: {len(set(drv_l) & set(drv_r))} нейронов")
 
     print("[мозг] загружаю матрицу весов...")
     weights = rp.get_weights(str(path_con), str(path_comp), str(path_wt), csr=True).to(device)
@@ -174,20 +212,37 @@ def main():
                     help="сенсорное возмущение: в средней трети прогона вход от "
                          "тела принудительно занижен до fb_base, как будто лапки "
                          "потеряли опору. Проверка причинности мозг->тело.")
+    ap.add_argument("--input-level", type=int, choices=(1, 2), default=1,
+                    help="куда подавать вход от тела: 1 — прямые партнёры P9, "
+                         "2 — на синапс выше (менее рукотворно, слабее усиление)")
     ap.add_argument("--perturb-side", choices=("both", "left", "right"), default="both",
                     help="какую сторону глушить при возмущении. Одностороннее "
                          "возмущение проверяет, даёт ли асимметрия P9 поворот.")
+    ap.add_argument("--autocal", type=int, default=0, metavar="N",
+                    help="автокалибровка: N циклов прогнать на максимальном входе "
+                         "и взять измеренный потолок КАЖДОГО канала за его "
+                         "собственную норму. Нужно, потому что левый и правый "
+                         "каналы коннектома имеют разное усиление (замер на L2: "
+                         "64 против 117 Гц при одинаковом входе), и общая "
+                         "константа заставляет муху ходить по кругу.")
+    ap.add_argument("--p9-ref", type=float, default=None,
+                    help="верх рабочего диапазона P9, Гц. По умолчанию берётся "
+                         "по уровню входа: 180 для L1, 110 для L2 (замерено в "
+                         "фактическим частотам в прогоне L2: обе стороны упираются "
+                         "в ~133 Гц)")
     args = ap.parse_args()
     fb_base, fb_span = args.fb_base, args.fb_span
+    p9_ref = args.p9_ref if args.p9_ref else (P9_REF_HZ if args.input_level == 1 else 135.0)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("=" * 78)
     print(f" ЗАМКНУТЫЙ КОНТУР v2  ({'РАЗОМКНУТЫЙ КОНТРОЛЬ' if args.open_loop else 'замкнутый'})")
     print("=" * 78)
     print(f"device={device}, циклов={args.cycles}, окно={SYNC_MS} мс")
-    print(f"обратная связь: {fb_base:.0f}..{fb_base + fb_span:.0f} Гц, seed={args.seed}")
+    print(f"обратная связь: {fb_base:.0f}..{fb_base + fb_span:.0f} Гц, "
+          f"уровень входа L{args.input_level}, P9_ref={p9_ref:.0f} Гц, seed={args.seed}")
 
-    model, n_neurons, idx_l, idx_r, drv_l, drv_r = build_brain(device)
+    model, n_neurons, idx_l, idx_r, drv_l, drv_r = build_brain(device, args.input_level)
     cond, delay_buf, spikes, v, refrac = model.state_init()
 
     sim, fly, cam = build_body(with_camera=args.video)
@@ -223,6 +278,36 @@ def main():
     alpha = 1.0 if args.tau <= 0 else 1.0 - float(np.exp(-SYNC_MS / args.tau))
     ema_l = ema_r = None
     print(f"[цикл] сглаживание команды: tau={args.tau:.0f} мс, alpha={alpha:.3f}")
+
+    ref_l = ref_r = p9_ref
+    if args.autocal > 0:
+        print(f"[калибровка] {args.autocal} циклов на максимальном входе "
+              f"{fb_base + fb_span:.0f} Гц...")
+        rates.zero_()
+        rates[:, drv_l] = fb_base + fb_span
+        rates[:, drv_r] = fb_base + fb_span
+        cal_l, cal_r = [], []
+        with torch.no_grad():
+            for c in range(args.autocal):
+                p9_acc.zero_()
+                for _ in range(inner_brain):
+                    cond, delay_buf, spikes, v, refrac = model(
+                        rates, cond, delay_buf, spikes, v, refrac, generator=gen)
+                    p9_acc += spikes[0, p9_idx]
+                a, b = (float(x) / (SYNC_MS / 1000.0) for x in p9_acc.tolist())
+                if c >= args.autocal // 2:   # первую половину считаем разгоном
+                    cal_l.append(a)
+                    cal_r.append(b)
+                # тело держим на постоянной команде, чтобы оно не падало
+                for _ in range(inner_phys):
+                    obs = HybridControllerObservation.from_sim(sim, fly.name)
+                    apply_locomotion_action(
+                        sim, fly.name, controller.step(np.array([0.8, 0.8]), obs))
+                    sim.step()
+        ref_l = max(float(np.mean(cal_l)), 1.0)
+        ref_r = max(float(np.mean(cal_r)), 1.0)
+        print(f"[калибровка] потолок каналов: левый {ref_l:.1f} Гц, "
+              f"правый {ref_r:.1f} Гц (асимметрия {ref_r / ref_l:.2f}x)")
 
     rows = []
     headers = [
@@ -290,8 +375,8 @@ def main():
                 ema_l += alpha * (hz_l - ema_l)
                 ema_r += alpha * (hz_r - ema_r)
 
-            cmd_l = float(np.clip(ema_l / P9_REF_HZ, 0.0, 1.0))
-            cmd_r = float(np.clip(ema_r / P9_REF_HZ, 0.0, 1.0))
+            cmd_l = float(np.clip(ema_l / ref_l, 0.0, 1.0))
+            cmd_r = float(np.clip(ema_r / ref_r, 0.0, 1.0))
             descending = np.array([cmd_l, cmd_r], dtype=float)
 
             # --- 4. мозг -> тело: 150 шагов физики под управлением CPG ---
