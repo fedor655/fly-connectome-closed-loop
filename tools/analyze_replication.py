@@ -48,6 +48,63 @@ def unwrap_deg(x):
     return np.degrees(np.unwrap(np.radians(np.asarray(x, dtype=float))))
 
 
+def lag_profile():
+    """Профиль связи по сдвигам.
+
+    Первый заход считал корреляцию со сдвигом в один цикл, то есть 15 мс.
+    Это почти наверняка мало: команда меняет амплитуды CPG, а поворот из этого
+    разворачивается за период походки, около 83 мс или 5-6 циклов. Здесь
+    смотрим весь профиль, чтобы отличить настоящую задержку от её отсутствия.
+
+    Заодно считаем связь КОМАНДЫ со скоростью поворота. Если и она нулевая,
+    значит дело не в зрении, а в том, что асимметрия команды вообще плохо
+    превращается в поворот при таком уровне шума.
+    """
+    print("\n" + "=" * 78)
+    print(" ПРОФИЛЬ ПО СДВИГАМ")
+    print("=" * 78)
+    print("  Сдвиг в циклах по 15 мс. Период походки при 12 Гц — около 5.5 цикла.")
+
+    per_cond = {}
+    for f in sorted(OUTPUT_DIR.glob(f"vision_rep_{TAG}_*.csv")):
+        name = f.stem.replace(f"vision_rep_{TAG}_", "")
+        cond = name.rsplit("_s", 1)[0]
+        df = pd.read_csv(f)
+        if len(df) < 40:
+            continue
+        heading = unwrap_deg(df["heading_deg"])
+        dturn = np.diff(heading)
+        dark = (df["dark_left"] - df["dark_right"]).to_numpy()[:-1]
+        cmd = (df["cmd_left"] - df["cmd_right"]).to_numpy()[:-1]
+        per_cond.setdefault(cond, []).append((dark, cmd, dturn))
+
+    lags = [0, 1, 2, 3, 5, 8, 12, 16, 20]
+    for source, title in ((0, "темнота -> скорость поворота"),
+                          (1, "команда -> скорость поворота")):
+        print(f"\n  --- {title} ---")
+        print(f"  {'сцена':<14s}" + "".join(f"{f'сдвиг {l}':>10s}" for l in lags))
+        for cond, runs in sorted(per_cond.items()):
+            cells = []
+            for lag in lags:
+                rs = []
+                for triple in runs:
+                    x = triple[source]
+                    y = triple[2]
+                    if lag > 0:
+                        xx, yy = x[:-lag], y[lag:]
+                    else:
+                        xx, yy = x, y
+                    if len(xx) > 10 and xx.std() > 1e-9 and yy.std() > 1e-9:
+                        rs.append(np.corrcoef(xx, yy)[0, 1])
+                cells.append(np.mean(rs) if rs else float("nan"))
+            print(f"  {cond:<14s}" + "".join(f"{c:>10.3f}" for c in cells))
+
+    print("\n  Читать так: настоящее влияние команды на поворот должно дать")
+    print("  максимум на сдвиге в несколько циклов, а не на нуле. Пик на нуле")
+    print("  или около него скорее говорит об обратной причинности: муха")
+    print("  поворачивает, кренится, и крен меняет яркость глаз.")
+
+
 def main():
     summ_path = OUTPUT_DIR / f"vision_replication_{TAG}.csv"
     if not summ_path.exists():
@@ -135,6 +192,8 @@ def main():
         verdict = ("значимо" if abs(t) > 2.5 else
                    "на грани" if abs(t) > 2.0 else "НЕ значимо")
         print(f"    {c:<14s} r={m:+.3f}  t={t:+6.2f}  n={k}  -> {verdict}")
+
+    lag_profile()
 
     p = out(f"replication_analysis_{TAG}.csv")
     ir.to_csv(p, index=False)
