@@ -17,15 +17,17 @@ d' = 1 — режимы едва различимы, d' > 2 — уверенно
 """
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 import torch
 
-PROJECT = "/mnt/d/временное использование федей/мозг мухи"
-sys.path.insert(0, f"{PROJECT}/fly-brain/code")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from flypaths import add_fly_brain_to_path, out  # noqa: E402
 
+add_fly_brain_to_path()
 from benchmark import path_comp, path_con, path_wt  # noqa: E402
 import run_pytorch as rp  # noqa: E402
 
@@ -150,9 +152,9 @@ def main():
         print()
         rows.append(row)
 
-    out = f"{PROJECT}/output/p9_noise_floor.csv"
-    pd.DataFrame(rows).to_csv(out, index=False)
-    print(f"\nсохранено: {out}")
+    out_csv = out("p9_noise_floor.csv")
+    pd.DataFrame(rows).to_csv(out_csv, index=False)
+    print(f"\nсохранено: {out_csv}")
     print("\nЧитать так: d' = 1 — режимы едва различимы, d' > 2 — уверенно.")
     print("Столбец tau показывает, какой ценой по задержке это достигается.")
 

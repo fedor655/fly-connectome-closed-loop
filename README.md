@@ -120,6 +120,16 @@ git clone https://github.com/NeLy-EPFL/NeuroMechFly neuromechfly
 
 Плюс `fly-brain` — LIF-модель коннектома с бэкендами Brian2 / PyTorch / GeNN, и данные FlyWire v783 (~763 МБ: `2025_Completeness_783.csv`, `2025_Connectivity_783.parquet`).
 
+Пути настраиваются переменными окружения (см. `flypaths.py`), ничего не зашито под конкретную машину:
+
+| Переменная | Что это | По умолчанию |
+|---|---|---|
+| `FLY_PROJECT_DIR` | корень репозитория | папка с `flypaths.py` |
+| `FLY_BRAIN_CODE` | код LIF-модели | `<проект>/fly-brain/code` |
+| `FLY_BRAIN_DATA` | данные коннектома | `~/fly-brain-data` |
+
+Тяжёлые данные держите в нативной файловой системе: под WSL смонтированные диски (9p) примерно втрое медленнее на файловом I/O, это заметно на загрузке весов.
+
 Окружение — одно conda-окружение с torch (CUDA), mujoco, flygym, pandas, scipy:
 
 ```bash
@@ -153,8 +163,17 @@ python closed_loop_v2.py --cycles 210 --tau 100 --fb-base 20 --fb-span 180 --per
 | `tools/analyze_p9_pathways.py` | Анализ коннектома вокруг P9 |
 | `tools/compare_brain_models.py` | Сверка двух реализаций модели мозга |
 | `tools/body_walk_check.py` | Проверка тела отдельно от мозга |
+| `tools/find_sensory_inputs.py` | Структурный скрининг афферентов (отрицательный результат) |
+| `tools/p9_upstream_levels.py` | Глубина транзитивности пути к P9 |
+| `flypaths.py` | Настройка путей через переменные окружения |
 | `output/` | Логи прогонов (CSV) и видео |
 | `PROJECT_LOG.md` | Рабочий журнал: хронология, все измерения, критерии приёмки |
+
+---
+
+## Лицензия
+
+MIT — см. [`LICENSE`](LICENSE). Распространяется на код и результаты измерений этого репозитория, но **не** на данные коннектома FlyWire, не на flygym / NeuroMechFly и не на модель Shiu et al. — у них свои условия, ссылки в файле лицензии.
 
 ---
 

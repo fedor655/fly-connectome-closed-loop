@@ -26,14 +26,17 @@ import csv
 import os
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 import torch
 
-PROJECT = "/mnt/d/временное использование федей/мозг мухи"
-sys.path.insert(0, f"{PROJECT}/fly-brain/code")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from flypaths import add_fly_brain_to_path, out  # noqa: E402
+
+add_fly_brain_to_path()
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 
@@ -415,8 +418,7 @@ def main():
     elapsed = time.perf_counter() - t0
     print(f"\nготово за {elapsed:.1f} с ({elapsed / args.cycles:.2f} с на цикл)")
 
-    out_csv = f"{PROJECT}/output/closed_loop_v2_{args.tag}.csv"
-    os.makedirs(os.path.dirname(out_csv), exist_ok=True)
+    out_csv = out(f"closed_loop_v2_{args.tag}.csv")
     with open(out_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(headers)
@@ -424,7 +426,7 @@ def main():
     print(f"лог: {out_csv}")
 
     if args.video:
-        video_path = f"{PROJECT}/output/closed_loop_v2_{args.tag}.mp4"
+        video_path = out(f"closed_loop_v2_{args.tag}.mp4")
         sim.renderer.save_video(video_path)
         print(f"видео: {video_path}")
 

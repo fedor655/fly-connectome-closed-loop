@@ -13,14 +13,16 @@ B) MVP      — BrainNetwork, переписанная вручную в closed_
 import os
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
 
-FLY_BRAIN_CODE = "/mnt/d/временное использование федей/мозг мухи/fly-brain/code"
-sys.path.insert(0, FLY_BRAIN_CODE)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from flypaths import DATA_DIR, PROJECT_DIR, add_fly_brain_to_path, out  # noqa: E402
 
+add_fly_brain_to_path()
 from benchmark import EXPERIMENTS, path_comp, path_con, path_wt  # noqa: E402
 import run_pytorch as rp  # noqa: E402
 
@@ -93,7 +95,7 @@ def run_mvp(flyid2i, weights_coo, sugar_ids):
     """Модель из closed_loop_mvp.py — импортируем классы, не запуская main()."""
     import importlib.util
     spec = importlib.util.spec_from_file_location(
-        "clm", "/mnt/d/временное использование федей/мозг мухи/closed_loop_mvp.py"
+        "clm", str(PROJECT_DIR / "closed_loop_mvp.py")
     )
     clm = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(clm)
@@ -155,7 +157,7 @@ def main():
     torch.cuda.empty_cache() if DEVICE == "cuda" else None
 
     # --- сверка эталона с сохранённым результатом прошлого прогона ---
-    ref_parquet = "/home/fedor/fly-brain-data/results/pytorch_t1.0s_n1.parquet"
+    ref_parquet = str(DATA_DIR / "results" / "pytorch_t1.0s_n1.parquet")
     if os.path.exists(ref_parquet):
         df = pd.read_parquet(ref_parquet)
         print("\n----- сверка эталона с сохранённым pytorch_t1.0s_n1.parquet -----")
@@ -175,9 +177,9 @@ def main():
     print(f"  P9 left:   эталон {a['p9_left_hz']:>10.1f}   MVP {b['p9_left_hz']:>10.1f} Гц")
     print(f"  P9 right:  эталон {a['p9_right_hz']:>10.1f}   MVP {b['p9_right_hz']:>10.1f} Гц")
 
-    out = "/mnt/d/временное использование федей/мозг мухи/output/brain_model_comparison.csv"
-    pd.DataFrame(results).to_csv(out, index=False)
-    print(f"\nсохранено: {out}")
+    out_csv = out("brain_model_comparison.csv")
+    pd.DataFrame(results).to_csv(out_csv, index=False)
+    print(f"\nсохранено: {out_csv}")
 
 
 if __name__ == "__main__":

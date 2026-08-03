@@ -21,15 +21,17 @@
 import json
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 import torch
 
-PROJECT = "/mnt/d/временное использование федей/мозг мухи"
-sys.path.insert(0, f"{PROJECT}/fly-brain/code")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from flypaths import add_fly_brain_to_path, out  # noqa: E402
 
+add_fly_brain_to_path()
 from benchmark import EXPERIMENTS, path_comp, path_con, path_wt  # noqa: E402
 import run_pytorch as rp  # noqa: E402
 
@@ -166,13 +168,14 @@ def main():
                         "p9_left_hz": hz[0], "p9_right_hz": hz[1],
                         "n_active": active})
 
-    out_csv = f"{PROJECT}/output/sensory_inputs_screen.csv"
+    out_csv = out("sensory_inputs_screen.csv")
     pd.DataFrame(results).to_csv(out_csv, index=False)
-    with open(f"{PROJECT}/output/p9_afferent_candidates.json", "w") as f:
+    out_json = out("p9_afferent_candidates.json")
+    with open(out_json, "w") as f:
         json.dump({"top_afferents": [int(i2flyid[i]) for i in probe_idx],
                    "p9_left": P9_LEFT, "p9_right": P9_RIGHT}, f, indent=2)
     print(f"\nсохранено: {out_csv}")
-    print(f"сохранено: {PROJECT}/output/p9_afferent_candidates.json")
+    print(f"сохранено: {out_json}")
 
 
 if __name__ == "__main__":

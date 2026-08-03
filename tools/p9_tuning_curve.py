@@ -19,14 +19,17 @@ P9 left/right от частоты входа.
 """
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 import torch
 
-FLY_BRAIN_CODE = "/mnt/d/временное использование федей/мозг мухи/fly-brain/code"
-sys.path.insert(0, FLY_BRAIN_CODE)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from flypaths import add_fly_brain_to_path, out  # noqa: E402
+
+add_fly_brain_to_path()
 from benchmark import EXPERIMENTS, path_comp, path_con, path_wt  # noqa: E402
 import run_pytorch as rp  # noqa: E402
 
@@ -41,7 +44,7 @@ TOP_K = 20
 SEED = 20260802
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-OUT_CSV = "/mnt/d/временное использование федей/мозг мухи/output/p9_tuning_curve.csv"
+OUT_CSV = out("p9_tuning_curve.csv")
 
 
 def top_excitatory_drivers(W, idx, k):

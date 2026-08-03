@@ -18,15 +18,17 @@ P9? Положительный ответ означает, что вход мо
 """
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 import torch
 
-PROJECT = "/mnt/d/временное использование федей/мозг мухи"
-sys.path.insert(0, f"{PROJECT}/fly-brain/code")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from flypaths import add_fly_brain_to_path, out  # noqa: E402
 
+add_fly_brain_to_path()
 from benchmark import path_comp, path_con, path_wt  # noqa: E402
 import run_pytorch as rp  # noqa: E402
 
@@ -40,7 +42,7 @@ TRANSIENT_MS = 200.0
 RATES_HZ = [100.0, 200.0, 300.0]
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-OUT_CSV = f"{PROJECT}/output/p9_upstream_levels.csv"
+OUT_CSV = out("p9_upstream_levels.csv")
 
 
 def top_exc_presyn(W, targets, k, exclude):

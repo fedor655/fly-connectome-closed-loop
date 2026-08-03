@@ -10,13 +10,16 @@
 Всё считается напрямую по 2025_Connectivity_783.parquet, без симуляции.
 """
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-FLY_BRAIN_CODE = "/mnt/d/временное использование федей/мозг мухи/fly-brain/code"
-sys.path.insert(0, FLY_BRAIN_CODE)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from flypaths import add_fly_brain_to_path  # noqa: E402
+
+add_fly_brain_to_path()
 from benchmark import EXPERIMENTS, path_comp, path_con  # noqa: E402
 
 P9_LEFT = 720575940627652358

@@ -24,7 +24,9 @@ import mujoco
 os.environ['MUJOCO_GL'] = 'egl'
 
 # Add fly-brain code path to sys.path
-sys.path.append('/mnt/d/временное использование федей/мозг мухи/fly-brain/code')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from flypaths import DATA_DIR, PROJECT_DIR, add_fly_brain_to_path
+add_fly_brain_to_path()
 from benchmark import EXPERIMENTS
 from flygym.compose import build_musculoskeletal_simulation
 
@@ -143,15 +145,15 @@ def main():
     print("          STARTING CLOSED-LOOP MVP SIMULATION (BRAIN <-> BODY)          ")
     print("========================================================================")
 
-    out_dir = "/mnt/d/временное использование федей/мозг мухи/output"
+    out_dir = str(PROJECT_DIR / "output")
     frames_dir = os.path.join(out_dir, "closed_loop_frames")
     os.makedirs(frames_dir, exist_ok=True)
 
-    csv_log_path = "/mnt/d/временное использование федей/мозг мухи/closed_loop_log.csv"
+    csv_log_path = str(PROJECT_DIR / "closed_loop_log.csv")
 
     # --- Step A: Load Brain Data & Map Neurons ---
     print("\n[1/4] Loading FlyWire connectome data for Brain Model...")
-    data_dir = "/home/fedor/fly-brain-data"
+    data_dir = str(DATA_DIR)
     df_comp = pd.read_csv(os.path.join(data_dir, "2025_Completeness_783.csv"))
     flyid2i = {int(row[0]): i for i, row in enumerate(df_comp.values)}
     i2flyid = {i: flyid for flyid, i in flyid2i.items()}
@@ -273,14 +275,6 @@ def main():
     print(f"  Saving MP4 video ({len(frames_list)} frames) to {video_path}...")
     imageio.mimwrite(video_path, frames_list, fps=30)
     print(f"  Video saved to {video_path}")
-
-    # --- Step E: Copy to Windows Downloads ---
-    win_downloads = "/mnt/c/Users/semin/Downloads"
-    if os.path.exists(win_downloads):
-        print(f"\nCopying output files to Windows Downloads ({win_downloads})...")
-        os.system(f"cp '{video_path}' '{win_downloads}/closed_loop_demo.mp4'")
-        os.system(f"cp '{csv_log_path}' '{win_downloads}/closed_loop_log.csv'")
-        print("  Copied closed_loop_demo.mp4 and closed_loop_log.csv to Downloads!")
 
     print("\n========================================================================")
     print("         CLOSED-LOOP MVP SIMULATION COMPLETED SUCCESSFULLY!            ")

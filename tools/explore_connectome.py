@@ -8,11 +8,15 @@
 Механосенсоров ног в этом датасете быть не должно — проверяем это явно.
 """
 import os
+import sys
+from pathlib import Path
 
 import pandas as pd
 
-DATA_DIR = "/home/fedor/fly-brain-data"
-COMP = os.path.join(DATA_DIR, "2025_Completeness_783.csv")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from flypaths import DATA_DIR  # noqa: E402
+
+COMP = os.path.join(str(DATA_DIR), "2025_Completeness_783.csv")
 
 pd.set_option("display.width", 200)
 pd.set_option("display.max_columns", 50)
