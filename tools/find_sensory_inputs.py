@@ -35,8 +35,9 @@ add_fly_brain_to_path()
 from benchmark import EXPERIMENTS, path_comp, path_con, path_wt  # noqa: E402
 import run_pytorch as rp  # noqa: E402
 
-P9_LEFT = 720575940627652358
-P9_RIGHT = 720575940635872101
+# Стороны по аннотациям FlyWire. В benchmark.py подписи перепутаны местами.
+P9_LEFT = 720575940635872101   # side=left
+P9_RIGHT = 720575940627652358  # side=right
 
 MAX_HOPS = 4
 DECAY = 0.6          # вклад дальних шагов гасим, иначе всё сводится к среднему по сети

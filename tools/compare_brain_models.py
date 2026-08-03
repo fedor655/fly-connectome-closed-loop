@@ -31,8 +31,9 @@ T_MS = 1000.0
 NUM_STEPS = int(T_MS / DT)
 SEED = 12345
 
-P9_LEFT = 720575940627652358
-P9_RIGHT = 720575940635872101
+# Стороны по аннотациям FlyWire. В benchmark.py подписи перепутаны местами.
+P9_LEFT = 720575940635872101   # side=left
+P9_RIGHT = 720575940627652358  # side=right
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 

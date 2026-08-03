@@ -22,6 +22,12 @@ FLY_BRAIN_CODE = Path(os.environ.get("FLY_BRAIN_CODE") or PROJECT_DIR / "fly-bra
 DATA_DIR = Path(os.environ.get("FLY_BRAIN_DATA") or Path.home() / "fly-brain-data")
 OUTPUT_DIR = PROJECT_DIR / "output"
 
+# Аннотации типов клеток (Schlegel et al., Nature 2024). В git не входят,
+# скачиваются отдельно — см. tools/fetch_annotations.md
+ANNOTATIONS = Path(
+    os.environ.get("FLY_ANNOTATIONS") or DATA_DIR / "annotations" / "neuron_annotations.tsv"
+)
+
 
 def add_fly_brain_to_path() -> None:
     """Сделать импортируемыми benchmark.py и run_pytorch.py из fly-brain."""
