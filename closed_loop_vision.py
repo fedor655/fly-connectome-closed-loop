@@ -67,12 +67,27 @@ DNP09_RIGHT = 720575940627652358
 
 DT_BRAIN_MS = 0.1
 SYNC_MS = 15.0
-TAU_CMD_MS = 100.0     # обосновано измерением d-prime, см. tools/p9_noise_floor.py
+TAU_CMD_MS = 150.0     # обосновано измерением d-prime, см. tools/p9_noise_floor.py
 
 # Диапазон стимуляции LC9. Из tools/visual_to_dn.py: 87 левых LC9 на 50 Гц дают
 # DNp09 32 Гц, на 200 Гц — 109 Гц. Работаем в этом диапазоне.
-LC_BASE_HZ = 40.0
-LC_SPAN_HZ = 180.0
+# Рабочая точка выбрана по измеренной кривой (tools/visual_to_dn.py): LC9 на
+# 200 Гц дают DNp09 около 110 Гц. Ниже нельзя — при 20-40 Гц на окне 15 мс
+# выходит 0-1 спайк, и команда снова квантуется, как было в первом контуре.
+LC_BASE_HZ = 100.0
+LC_SPAN_HZ = 300.0
+
+# Рабочая точка: при ПУСТОМ поле зрения муха должна идти нормально, а объект
+# лишь модулировать. Поэтому потолок каждого канала DNp09 меряется на базовой
+# стимуляции LC_BASE_HZ и приравнивается к этой команде, а не к единице.
+# Первая версия калибровалась по максимальной стимуляции, из-за чего при пустом
+# поле команда выходила 0.04, муха не шла, до объекта не доходила и зрение
+# ничего не видело — замкнутый круг.
+TARGET_CMD_AT_BASE = 0.65
+
+# Усиление сигнала темноты. Объект в поле зрения меняет среднюю яркость глаза
+# на единицы процентов, поэтому без усиления модуляция тонет.
+DARK_GAIN = 6.0
 
 PILLAR_R = 1.2
 PILLAR_H = 8.0
@@ -143,7 +158,8 @@ def eye_darkness(readouts, baseline):
     """
     per_om = readouts.sum(axis=2)          # (2 глаза, 721 омматидий)
     inten = per_om.mean(axis=1)            # средняя яркость по глазу
-    dark = np.clip((baseline - inten) / np.maximum(baseline, 1e-6), 0.0, 1.0)
+    rel = (baseline - inten) / np.maximum(baseline, 1e-6)
+    dark = np.clip(rel * DARK_GAIN, 0.0, 1.0)
     return inten, dark
 
 
@@ -158,7 +174,11 @@ def main():
     ap.add_argument("--tag", type=str, default="vision")
     ap.add_argument("--video", action="store_true")
     ap.add_argument("--autocal", type=int, default=15,
-                    help="циклов на замер базовой яркости и потолка DNp09")
+                    help="циклов на замер базовой яркости пустого поля")
+    ap.add_argument("--cal-brain-ms", type=float, default=3000.0,
+                    help="сколько мс гонять мозг для замера нормы каналов. "
+                         "Меньше 1000 мс не хватает спайков: оценка по 4-8 "
+                         "спайкам даёт мнимую асимметрию каналов и насыщение")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -213,27 +233,55 @@ def main():
         for _ in range(inner_brain):
             cond, delay_buf, spikes, v, refrac = model(
                 rates, cond, delay_buf, spikes, v, refrac, generator=gen)
-            dn_acc += spikes[0, dn_idx]
+            # именно add_, а не +=: augmented assignment во вложенной функции
+            # сделал бы dn_acc локальной и уронил бы zero_() выше
+            dn_acc.add_(spikes[0, dn_idx])
         a, b = (float(x) / (SYNC_MS / 1000.0) for x in dn_acc.tolist())
         return a, b
 
     # --- калибровка: базовая яркость пустого поля и потолок каждого канала ---
-    print(f"[калибровка] {args.autocal} циклов...")
-    base_int, ceil_l, ceil_r = [], [], []
+    # Калибровка в два приёма.
+    #
+    # Первая версия мерила отклик DNp09 по нескольким окнам синхронизации —
+    # это 0.18 секунды, то есть 4-8 спайков на канал. По такой выборке
+    # двукратная разница между каналами оказывается чистым шумом счёта, а не
+    # свойством сети: нормировка получалась вдвое заниженной, и правый канал
+    # сидел в насыщении весь прогон. Проверено контролем без объекта, где муха
+    # всё равно разворачивалась на 69 градусов.
+    #
+    # Поэтому яркость меряем на теле (нужен реальный обзор), а отклик мозга —
+    # отдельным длинным прогоном без шагания тела, чтобы набрать достаточно
+    # спайков.
+    print(f"[калибровка] яркость пустого поля: {args.autocal} циклов...")
+    base_int = []
     with torch.no_grad():
-        for c in range(args.autocal):
-            step_body(np.array([0.8, 0.8]))
-            ro = sim.get_ommatidia_readouts(fly.name)
-            base_int.append(ro.sum(axis=2).mean(axis=1))
-            a, b = step_brain(LC_BASE_HZ + LC_SPAN_HZ, LC_BASE_HZ + LC_SPAN_HZ)
-            if c >= args.autocal // 2:
-                ceil_l.append(a)
-                ceil_r.append(b)
+        for _ in range(args.autocal):
+            step_body(np.array([0.85, 0.85]))
+            base_int.append(sim.get_ommatidia_readouts(fly.name).sum(axis=2).mean(axis=1))
     baseline = np.array(base_int).mean(axis=0)
-    ref_l = max(float(np.mean(ceil_l)), 1.0)
-    ref_r = max(float(np.mean(ceil_r)), 1.0)
+
+    print(f"[калибровка] отклик DNp09: {args.cal_brain_ms:.0f} мс мозга на "
+          f"{LC_BASE_HZ:.0f} Гц...")
+    n_cal_windows = int(args.cal_brain_ms / SYNC_MS)
+    spikes_l = spikes_r = 0.0
+    with torch.no_grad():
+        for w in range(n_cal_windows):
+            a, b = step_brain(LC_BASE_HZ, LC_BASE_HZ)
+            if w >= n_cal_windows // 4:      # четверть на переходный процесс
+                spikes_l += a * (SYNC_MS / 1000.0)
+                spikes_r += b * (SYNC_MS / 1000.0)
+    t_cal = max(n_cal_windows - n_cal_windows // 4, 1) * SYNC_MS / 1000.0
+    resp_l = max(spikes_l / t_cal, 1.0)
+    resp_r = max(spikes_r / t_cal, 1.0)
+    print(f"[калибровка] набрано спайков: левый {spikes_l:.0f}, правый {spikes_r:.0f} "
+          f"за {t_cal:.2f} с")
+    ref_l = resp_l / TARGET_CMD_AT_BASE
+    ref_r = resp_r / TARGET_CMD_AT_BASE
     print(f"[калибровка] базовая яркость: левый {baseline[0]:.4f}, правый {baseline[1]:.4f}")
-    print(f"[калибровка] потолок DNp09: левый {ref_l:.1f} Гц, правый {ref_r:.1f} Гц")
+    print(f"[калибровка] отклик DNp09 на базовой стимуляции: "
+          f"левый {resp_l:.1f} Гц, правый {resp_r:.1f} Гц")
+    print(f"[калибровка] норма каналов: левый {ref_l:.1f}, правый {ref_r:.1f} "
+          f"(пустое поле даёт команду {TARGET_CMD_AT_BASE})")
 
     headers = ["cycle", "t_sec", "eye_left_int", "eye_right_int",
                "dark_left", "dark_right", "lc_rate_left_hz", "lc_rate_right_hz",

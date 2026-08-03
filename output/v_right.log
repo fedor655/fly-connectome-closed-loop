@@ -1,0 +1,83 @@
+==============================================================================
+ ЗРИТЕЛЬНЫЙ ЗАМКНУТЫЙ КОНТУР: глаза -> LC9 -> DNp09 -> походка
+==============================================================================
+device=cuda, циклов=100, столб в (12.0, -3.0)
+[мозг] читаю нейроны и аннотации...
+[мозг] нейронов 138639; LC9 слева 87, справа 92
+[мозг] DNp09 left index=119032, right index=83620
+[мозг] загружаю веса...
+[тело] собираю модель со зрением...
+[тело] шаг физики 0.1000 мс, столб в (12.0, -3.0) мм
+[калибровка] яркость пустого поля: 15 циклов...
+[калибровка] отклик DNp09: 3000 мс мозга на 100 Гц...
+[калибровка] набрано спайков: левый 110, правый 43 за 2.25 с
+[калибровка] базовая яркость: левый 0.6044, правый 0.5791
+[калибровка] отклик DNp09 на базовой стимуляции: левый 48.9 Гц, правый 19.1 Гц
+[калибровка] норма каналов: левый 75.2, правый 29.4 (пустое поле даёт команду 0.65)
+
+[цикл] шагов мозга=150, шагов физики=150
+  [  0/100] глаза 0.602/0.578 темнота 0.019/0.013  LC 106/104Гц  DNp09 67/0Гц  cmd 0.89/0.00  x=2.5 y=0.6 курс=+9°
+  [ 10/100] глаза 0.616/0.554 темнота 0.000/0.261  LC 100/178Гц  DNp09 0/67Гц  cmd 0.59/1.00  x=3.8 y=0.4 курс=+4°
+  [ 20/100] глаза 0.610/0.564 темнота 0.000/0.157  LC 100/147Гц  DNp09 67/0Гц  cmd 0.68/1.00  x=5.6 y=0.5 курс=+8°
+  [ 30/100] глаза 0.590/0.570 темнота 0.142/0.092  LC 143/128Гц  DNp09 67/0Гц  cmd 0.67/1.00  x=7.3 y=1.0 курс=+15°
+  [ 40/100] глаза 0.579/0.569 темнота 0.249/0.108  LC 175/132Гц  DNp09 67/0Гц  cmd 0.49/1.00  x=8.7 y=1.8 курс=+26°
+  [ 50/100] глаза 0.603/0.529 темнота 0.011/0.520  LC 103/256Гц  DNp09 0/133Гц  cmd 0.43/1.00  x=9.8 y=3.0 курс=+43°
+  [ 60/100] глаза 0.608/0.567 темнота 0.000/0.126  LC 100/138Гц  DNp09 67/67Гц  cmd 0.49/1.00  x=10.6 y=4.0 курс=+60°
+  [ 70/100] глаза 0.609/0.606 темнота 0.000/0.000  LC 100/100Гц  DNp09 0/0Гц  cmd 0.74/1.00  x=11.4 y=5.6 курс=+69°
+  [ 80/100] глаза 0.593/0.618 темнота 0.114/0.000  LC 134/100Гц  DNp09 67/0Гц  cmd 0.91/0.86  x=11.9 y=7.4 курс=+73°
+  [ 90/100] глаза 0.591/0.610 темнота 0.131/0.000  LC 139/100Гц  DNp09 67/0Гц  cmd 0.91/0.51  x=12.2 y=9.0 курс=+68°
+  [ 99/100] глаза 0.619/0.584 темнота 0.000/0.000  LC 100/100Гц  DNp09 67/0Гц  cmd 0.85/0.40  x=12.8 y=10.1 курс=+64°
+
+готово за 107 с (1.07 с на цикл)
+лог: /mnt/d/временное использование федей/мозг мухи/output/closed_loop_vision_right.csv
+
+==============================================================================
+ ИТОГ
+==============================================================================
+  смещение: dx=+10.35 dy=+9.44 мм, путь 14.01 мм
+  поворот курса за прогон: +55.0°
+  темнота левого глаза:  среднее 0.0712, максимум 0.2854
+  темнота правого глаза: среднее 0.1444, максимум 0.6976
+  cmd_left  среднее 0.659, разброс 0.168
+  cmd_right среднее 0.845, разброс 0.275
+  дистанция до столба: старт 10.2, минимум 5.7, финиш 13.1 мм
+  асимметрия команды (лево-право): среднее -0.1863
+Exception ignored in: <function Renderer.__del__ at 0x78552f5fc400>
+Traceback (most recent call last):
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/rendering/classic/renderer.py", line 343, in __del__
+    self.close()
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/rendering/classic/renderer.py", line 329, in close
+    self._gl_context.free()
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/egl/__init__.py", line 133, in free
+    EGL.eglDestroyContext(EGL_DISPLAY, self._context)
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/OpenGL/platform/baseplatform.py", line 487, in __call__
+    return self(*args, **named)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/OpenGL/error.py", line 230, in glCheckError
+    raise self._errorClass(
+OpenGL.raw.EGL._errors.EGLError: EGLError(
+	err = EGL_NOT_INITIALIZED,
+	baseOperation = eglDestroyContext,
+	cArguments = (
+		<OpenGL._opaque.EGLDisplay_pointer object at 0x7854e0318050>,
+		<OpenGL._opaque.EGLContext_pointer object at 0x7854e03190d0>,
+	),
+	result = 0
+)
+Exception ignored in: <function GLContext.__del__ at 0x78552f593d80>
+Traceback (most recent call last):
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/egl/__init__.py", line 138, in __del__
+    self.free()
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/egl/__init__.py", line 133, in free
+    EGL.eglDestroyContext(EGL_DISPLAY, self._context)
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/OpenGL/error.py", line 230, in glCheckError
+    raise self._errorClass(
+OpenGL.raw.EGL._errors.EGLError: EGLError(
+	err = EGL_NOT_INITIALIZED,
+	baseOperation = eglDestroyContext,
+	cArguments = (
+		<OpenGL._opaque.EGLDisplay_pointer object at 0x7854e0318050>,
+		<OpenGL._opaque.EGLContext_pointer object at 0x7854e03190d0>,
+	),
+	result = 0
+)
