@@ -789,8 +789,9 @@ def run_looming(condition, seed, cycles=60, assets=None, device="cpu",
     for cycle in range(cycles):
         px, py = pillar_track(condition, cycle)
         move_pillar(sim, px, py)
-        ro = sim.get_ommatidia_readouts(fly.name).sum(axis=2, keepdims=True)
-        dark = encode(np.repeat(ro, 2, axis=2), baseline, om_zone, condition)
+        # encode сам суммирует по каналам омматидия; складывать здесь нельзя,
+        # иначе яркость удвоится и темнота никогда не поднимется над нулём.
+        dark = encode(sim.get_ommatidia_readouts(fly.name), baseline, om_zone, condition)
         hz_l, hz_r = step_brain(zone_rates(dark, zones, n, device))
         if ema_l is None:
             ema_l, ema_r = hz_l, hz_r
