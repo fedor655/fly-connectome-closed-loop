@@ -45,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flypaths import ANNOTATIONS, add_fly_brain_to_path, out  # noqa: E402
 
 add_fly_brain_to_path()
-os.environ.setdefault("MUJOCO_GL", "egl")
+# MUJOCO_GL под платформу выставляет flypaths, импортированный выше
 
 from benchmark import path_comp, path_con, path_wt  # noqa: E402
 import run_pytorch as rp  # noqa: E402

@@ -18,14 +18,14 @@ import torch
 import torch.nn as nn
 from PIL import Image
 import imageio
-import mujoco
 
-# Set EGL for hardware-accelerated offscreen rendering in WSL2
-os.environ['MUJOCO_GL'] = 'egl'
-
-# Add fly-brain code path to sys.path
+# Add fly-brain code path to sys.path. Импорт flypaths обязан идти до mujoco:
+# он выбирает MUJOCO_GL под платформу (egl на Linux/WSL, cgl на macOS),
+# а mujoco читает эту переменную один раз, прямо на импорте.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from flypaths import DATA_DIR, PROJECT_DIR, add_fly_brain_to_path
+
+import mujoco
 add_fly_brain_to_path()
 from benchmark import EXPERIMENTS
 from flygym.compose import build_musculoskeletal_simulation

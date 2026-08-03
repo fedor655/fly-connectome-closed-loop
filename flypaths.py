@@ -19,8 +19,28 @@ from pathlib import Path
 
 PROJECT_DIR = Path(os.environ.get("FLY_PROJECT_DIR") or Path(__file__).resolve().parent)
 FLY_BRAIN_CODE = Path(os.environ.get("FLY_BRAIN_CODE") or PROJECT_DIR / "fly-brain" / "code")
-DATA_DIR = Path(os.environ.get("FLY_BRAIN_DATA") or Path.home() / "fly-brain-data")
+
+
+def _data_dir() -> Path:
+    """Где лежат данные коннектома: переменная, потом ~/fly-brain-data, потом репозиторий.
+
+    Домашний каталог проверяется первым, чтобы не сломать машины, где данные уже
+    разложены по описанному выше правилу. На чистой установке его нет — setup.py
+    кладёт всё в fly-brain/data, туда же смотрит и benchmark.py.
+    """
+    if env := os.environ.get("FLY_BRAIN_DATA"):
+        return Path(env)
+    home = Path.home() / "fly-brain-data"
+    return home if home.is_dir() else PROJECT_DIR / "fly-brain" / "data"
+
+
+DATA_DIR = _data_dir()
 OUTPUT_DIR = PROJECT_DIR / "output"
+
+# Бэкенд offscreen-рендера mujoco. egl бывает только на Linux/WSL, на macOS
+# его нет вовсе и mujoco падает прямо на импорте; cgl работает без окна.
+# Ставится здесь, до того как любой скрипт проекта импортирует flygym.
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 # Аннотации типов клеток (Schlegel et al., Nature 2024). В git не входят,
 # скачиваются отдельно — см. tools/fetch_annotations.md

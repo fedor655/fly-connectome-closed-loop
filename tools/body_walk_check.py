@@ -15,7 +15,9 @@ import time
 
 import numpy as np
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+# Единственный скрипт, которому flypaths не нужен, поэтому бэкенд выбирается тут:
+# egl есть только на Linux/WSL, на macOS mujoco с ним падает на импорте.
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 from flygym.compose import FlatGroundWorld
 from flygym.simulation import Simulation
