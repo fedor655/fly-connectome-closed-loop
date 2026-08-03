@@ -121,7 +121,70 @@ class PillarWorld(FlatGroundWorld):
         )
 
 
-def load_brain_assets(device, verbose=True):
+def _select_population(device, weights, n, flyid2i, ann, verbose):
+    """Отобрать латерализованные нисходящие, реально отзывающиеся на зрение.
+
+    Отбирать по анатомическим весам нельзя: уже дважды выяснялось, что вес
+    связи не равен функциональному влиянию (Sugar GRNs до P9, DNg108 от
+    восходящих). Поэтому стимулируем зрительные проекционные каждой стороны и
+    берём тех нисходящих, кто загорается на своей стороне и молчит на чужой.
+
+    Результат кэшируется: сам отбор занимает около минуты, а зависит только от
+    коннектома, то есть не меняется от прогона к прогону.
+    """
+    cache = Path(out("dn_population_cache.npz"))
+    if cache.exists():
+        z = np.load(cache)
+        if verbose:
+            print(f"[мозг] популяция из кэша: слева {len(z['left'])}, "
+                  f"справа {len(z['right'])}")
+        return z["left"].tolist(), z["right"].tolist()
+
+    if verbose:
+        print("[мозг] отбираю популяцию нисходящих (кэша нет, около минуты)...")
+    vis = ann[ann["super_class"] == "visual_projection"]
+    vis_l = [flyid2i[i] for i in vis.loc[vis["side"] == "left", "root_id"]]
+    vis_r = [flyid2i[i] for i in vis.loc[vis["side"] == "right", "root_id"]]
+
+    desc = ann[(ann["super_class"] == "descending") & ann["side"].isin(["left", "right"])]
+    dn_idx = [flyid2i[int(x)] for x in desc["root_id"]]
+    dn_side = np.array(desc["side"].tolist())
+    idx_t = torch.tensor(dn_idx, dtype=torch.long, device=device)
+
+    def probe(stim):
+        m = rp.TorchModel(1, n, DT_BRAIN_MS, rp.MODEL_PARAMS, weights,
+                          exc_indices=list(stim), device=device)
+        c, d, s, v, r = m.state_init()
+        rates = torch.zeros(1, n, device=device)
+        rates[:, stim] = 150.0
+        g = torch.Generator(device=device)
+        g.manual_seed(2024)
+        acc = torch.zeros(len(dn_idx), device=device)
+        n_tr, n_me = int(300.0 / DT_BRAIN_MS), int(2000.0 / DT_BRAIN_MS)
+        with torch.no_grad():
+            for step in range(n_tr + n_me):
+                c, d, s, v, r = m(rates, c, d, s, v, r, generator=g)
+                if step >= n_tr:
+                    acc.add_(s[0, idx_t])
+        return np.array(acc.tolist()) / 2.0
+
+    hz_l, hz_r = probe(vis_l), probe(vis_r)
+    ipsi = np.where(dn_side == "left", hz_l, hz_r)
+    contra = np.where(dn_side == "left", hz_r, hz_l)
+    tot = ipsi + contra
+    lat = np.where(tot > 0, (ipsi - contra) / np.maximum(tot, 1e-9), 0.0)
+    keep = (ipsi > 5.0) & (lat > 0.5)
+
+    arr = np.array(dn_idx)
+    sel_l = arr[keep & (dn_side == "left")]
+    sel_r = arr[keep & (dn_side == "right")]
+    np.savez(cache, left=sel_l, right=sel_r)
+    if verbose:
+        print(f"[мозг] отобрано: слева {len(sel_l)}, справа {len(sel_r)}")
+    return sel_l.tolist(), sel_r.tolist()
+
+
+def load_brain_assets(device, verbose=True, readout="population", stim="visual"):
     """Загрузить коннектом и найти нужные популяции. Делается ОДИН раз на серию:
     чтение parquet и весов занимает около минуты, и повторять его на каждый
     прогон бессмысленно."""
@@ -137,17 +200,27 @@ def load_brain_assets(device, verbose=True):
     ann["root_id"] = ann["root_id"].astype("int64")
     ann = ann[ann["root_id"].isin(flyid2i.keys())]
 
-    lc9 = ann[ann["cell_type"] == "LC9"]
-    lc_l = [flyid2i[i] for i in lc9.loc[lc9["side"] == "left", "root_id"]]
-    lc_r = [flyid2i[i] for i in lc9.loc[lc9["side"] == "right", "root_id"]]
-    idx_l, idx_r = flyid2i[DNP09_LEFT], flyid2i[DNP09_RIGHT]
+    if stim == "lc9":
+        src = ann[ann["cell_type"] == "LC9"]
+    else:
+        src = ann[ann["super_class"] == "visual_projection"]
+    lc_l = [flyid2i[i] for i in src.loc[src["side"] == "left", "root_id"]]
+    lc_r = [flyid2i[i] for i in src.loc[src["side"] == "right", "root_id"]]
 
     if verbose:
-        print(f"[мозг] нейронов {n}; LC9 слева {len(lc_l)}, справа {len(lc_r)}")
+        print(f"[мозг] нейронов {n}; вход «{stim}»: слева {len(lc_l)}, справа {len(lc_r)}")
         print("[мозг] загружаю веса...")
     weights = rp.get_weights(str(path_con), str(path_comp), str(path_wt), csr=True).to(device)
-    return {"weights": weights, "n": n, "idx_l": idx_l, "idx_r": idx_r,
-            "lc_l": lc_l, "lc_r": lc_r}
+
+    if readout == "population":
+        read_l, read_r = _select_population(device, weights, n, flyid2i, ann, verbose)
+    else:
+        read_l, read_r = [flyid2i[DNP09_LEFT]], [flyid2i[DNP09_RIGHT]]
+        if verbose:
+            print("[мозг] считывание: одиночный DNp09 с каждой стороны")
+
+    return {"weights": weights, "n": n, "read_l": read_l, "read_r": read_r,
+            "lc_l": lc_l, "lc_r": lc_r, "readout": readout, "stim": stim}
 
 
 LOG_COLUMNS = ["cycle", "t_sec", "eye_left_int", "eye_right_int",
@@ -159,14 +232,23 @@ LOG_COLUMNS = ["cycle", "t_sec", "eye_left_int", "eye_right_int",
 def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
               cycles=100, autocal=15, cal_brain_ms=3000.0, seed=0,
               tau_eye=TAU_EYE_MS, tau_cmd=TAU_CMD_MS,
+              lc_base=None, lc_span=None,
               video_path=None, verbose=True):
     """Один прогон. Возвращает (DataFrame лога, словарь сводки)."""
     px = FAR_AWAY if no_pillar else pillar_x
     py = FAR_AWAY if no_pillar else pillar_y
 
     n = assets["n"]
-    idx_l, idx_r = assets["idx_l"], assets["idx_r"]
+    read_l, read_r = assets["read_l"], assets["read_r"]
     lc_l, lc_r = assets["lc_l"], assets["lc_r"]
+
+    # Широкий вход (все зрительные проекционные, около 4000 нейронов) требует
+    # вчетверо меньших частот, чем узкий по LC9 (87 нейронов), иначе сеть
+    # уходит в насыщение.
+    if lc_base is None:
+        lc_base = 60.0 if assets.get("stim") == "visual" else LC_BASE_HZ
+    if lc_span is None:
+        lc_span = 140.0 if assets.get("stim") == "visual" else LC_SPAN_HZ
 
     model = rp.TorchModel(1, n, DT_BRAIN_MS, rp.MODEL_PARAMS, assets["weights"],
                           exc_indices=sorted(set(lc_l) | set(lc_r)), device=device)
@@ -193,7 +275,12 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
     inner_phys = int(round(SYNC_MS / 1000.0 / sim.timestep))
 
     rates = torch.zeros(1, n, device=device)
-    dn_idx = torch.tensor([idx_l, idx_r], dtype=torch.long, device=device)
+    # Считываем СРЕДНЮЮ частоту популяции с каждой стороны. Одиночный нейрон
+    # даёт полтора спайка за окно и около 60 процентов шума — именно это
+    # разваливало поведение в предыдущей серии.
+    idx_read_l = torch.tensor(read_l, dtype=torch.long, device=device)
+    idx_read_r = torch.tensor(read_r, dtype=torch.long, device=device)
+    n_read_l, n_read_r = max(len(read_l), 1), max(len(read_r), 1)
     dn_acc = torch.zeros(2, device=device)
     gen = torch.Generator(device=device)
     gen.manual_seed(seed)
@@ -225,8 +312,11 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
                 rates, cond, delay_buf, spikes, v, refrac, generator=gen)
             # add_, а не +=: augmented assignment во вложенной функции сделал бы
             # dn_acc локальной и уронил бы zero_() выше
-            dn_acc.add_(spikes[0, dn_idx])
-        return tuple(float(x) / (SYNC_MS / 1000.0) for x in dn_acc.tolist())
+            dn_acc[0] += spikes[0, idx_read_l].sum()
+            dn_acc[1] += spikes[0, idx_read_r].sum()
+        a, b = dn_acc.tolist()
+        t_win = SYNC_MS / 1000.0
+        return a / n_read_l / t_win, b / n_read_r / t_win
 
     # --- Калибровка в два приёма ---
     # Яркость меряем на теле (нужен реальный обзор), а отклик мозга — отдельным
@@ -246,7 +336,7 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
     sp_l = sp_r = 0.0
     with torch.no_grad():
         for w in range(n_cal):
-            a, b = step_brain(LC_BASE_HZ, LC_BASE_HZ)
+            a, b = step_brain(lc_base, lc_base)
             if w >= n_cal // 4:                # четверть на переходный процесс
                 sp_l += a * (SYNC_MS / 1000.0)
                 sp_r += b * (SYNC_MS / 1000.0)
@@ -272,8 +362,8 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
             rel = (baseline - eye_filt) / np.maximum(baseline, 1e-6)
             dark = np.clip(rel * DARK_GAIN, 0.0, 1.0)
 
-            rate_l = LC_BASE_HZ + LC_SPAN_HZ * float(dark[0])
-            rate_r = LC_BASE_HZ + LC_SPAN_HZ * float(dark[1])
+            rate_l = lc_base + lc_span * float(dark[0])
+            rate_r = lc_base + lc_span * float(dark[1])
             hz_l, hz_r = step_brain(rate_l, rate_r)
 
             if ema_l is None:
@@ -322,6 +412,8 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
     dy = df["thorax_y_mm"].iloc[-1] - df["thorax_y_mm"].iloc[0]
     summary = {
         "seed": seed, "no_pillar": bool(no_pillar), "pillar_y": None if no_pillar else pillar_y,
+        "readout": assets.get("readout", "?"), "stim": assets.get("stim", "?"),
+        "n_read_left": len(read_l), "n_read_right": len(read_r),
         "turn_deg": turn, "path_mm": float(np.hypot(dx, dy)),
         "dx_mm": float(dx), "dy_mm": float(dy),
         "dark_left_mean": float(df["dark_left"].mean()),
@@ -355,22 +447,32 @@ def main():
     ap.add_argument("--cal-brain-ms", type=float, default=3000.0)
     ap.add_argument("--tau-eye", type=float, default=TAU_EYE_MS)
     ap.add_argument("--tau-cmd", type=float, default=TAU_CMD_MS)
+    ap.add_argument("--readout", choices=("population", "dnp09"), default="population",
+                    help="считывать среднее по популяции латерализованных "
+                         "нисходящих или один DNp09 на сторону")
+    ap.add_argument("--stim", choices=("visual", "lc9"), default="visual",
+                    help="куда подавать яркость: во все зрительные проекционные "
+                         "или только в LC9")
+    ap.add_argument("--lc-base", type=float, default=None)
+    ap.add_argument("--lc-span", type=float, default=None)
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("=" * 78)
-    print(" ЗРИТЕЛЬНЫЙ ЗАМКНУТЫЙ КОНТУР: глаза -> LC9 -> DNp09 -> походка")
+    print(" ЗРИТЕЛЬНЫЙ ЗАМКНУТЫЙ КОНТУР: глаза -> зрительные -> нисходящие -> походка")
     print("=" * 78)
     print(f"device={device}, циклов={args.cycles}, seed={args.seed}, "
           f"столб {'убран' if args.no_pillar else f'y={args.pillar_y:+.1f}'}")
+    print(f"вход «{args.stim}», считывание «{args.readout}»")
 
-    assets = load_brain_assets(device)
+    assets = load_brain_assets(device, readout=args.readout, stim=args.stim)
     video_path = out(f"closed_loop_vision_{args.tag}.mp4") if args.video else None
 
     df, s = run_trial(assets, device, pillar_y=args.pillar_y, no_pillar=args.no_pillar,
                       pillar_x=args.pillar_x, cycles=args.cycles, autocal=args.autocal,
                       cal_brain_ms=args.cal_brain_ms, seed=args.seed,
                       tau_eye=args.tau_eye, tau_cmd=args.tau_cmd,
+                      lc_base=args.lc_base, lc_span=args.lc_span,
                       video_path=video_path)
 
     out_csv = out(f"closed_loop_vision_{args.tag}.csv")

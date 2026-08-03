@@ -23,6 +23,12 @@ output/neurons_descending.csv
 output/neurons_ascending.csv
 *.tsv
 
+# Кэш отбора популяции нисходящих: тоже производное от аннотаций,
+# пересчитывается измерением примерно за минуту.
+output/dn_population_cache.npz
+output/dn_population_readout.csv
+output/dn_population_selected.csv
+
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
