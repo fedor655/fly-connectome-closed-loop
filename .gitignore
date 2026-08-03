@@ -29,6 +29,10 @@ output/dn_population_cache.npz
 output/dn_population_readout.csv
 output/dn_population_selected.csv
 
+# Захваченный stdout прогонов: шум EGL при завершении интерпретатора,
+# полезное содержимое и так лежит в CSV
+output/*.log
+
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
