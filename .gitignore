@@ -15,6 +15,14 @@ pip-cache/
 weight_coo.pkl
 weight_csr.pkl
 
+# Производные от аннотаций FlyWire. Репозиторий flyconnectome/flywire_annotations
+# опубликован БЕЗ лицензии, поэтому перераспространять их данные, даже срезами,
+# мы не вправе. Скрипты качают исходник сами — см. README.
+output/annotations_matched.csv
+output/neurons_descending.csv
+output/neurons_ascending.csv
+*.tsv
+
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
