@@ -9,3 +9,113 @@ device=cuda, циклов=100, столб в (12.0, +3.0)
 [тело] собираю модель со зрением...
 [тело] шаг физики 0.1000 мс, столб в (12.0, +3.0) мм
 [калибровка] яркость пустого поля: 15 циклов...
+[калибровка] отклик DNp09: 3000 мс мозга на 100 Гц...
+[калибровка] набрано спайков: левый 110, правый 43 за 2.25 с
+[калибровка] базовая яркость: левый 0.5744, правый 0.5835
+[калибровка] отклик DNp09 на базовой стимуляции: левый 48.9 Гц, правый 19.1 Гц
+[калибровка] норма каналов: левый 75.2, правый 29.4 (пустое поле даёт команду 0.65)
+
+[цикл] шагов мозга=150, шагов физики=150
+  [  0/100] глаза 0.560/0.557 темнота 0.145/0.272  LC 144/182Гц  DNp09 67/67Гц  cmd 0.89/1.00  x=2.5 y=0.7 курс=+10°
+  [ 10/100] глаза 0.567/0.563 темнота 0.075/0.206  LC 122/162Гц  DNp09 67/0Гц  cmd 1.00/1.00  x=4.4 y=0.7 курс=+14°
+  [ 20/100] глаза 0.539/0.600 темнота 0.366/0.000  LC 210/100Гц  DNp09 67/0Гц  cmd 1.00/1.00  x=6.7 y=0.8 курс=+7°
+  [ 30/100] глаза 0.468/0.607 темнота 1.000/0.000  LC 400/100Гц  DNp09 133/0Гц  cmd 1.00/0.78  x=8.7 y=1.1 курс=+3°
+  [ 40/100] глаза 0.339/0.605 темнота 1.000/0.000  LC 400/100Гц  DNp09 200/0Гц  cmd 1.00/0.29  x=10.3 y=1.2 курс=-6°
+  [ 50/100] глаза 0.348/0.594 темнота 1.000/0.000  LC 400/100Гц  DNp09 133/0Гц  cmd 1.00/0.11  x=11.6 y=0.8 курс=-24°
+  [ 60/100] глаза 0.568/0.586 темнота 0.071/0.000  LC 121/100Гц  DNp09 67/0Гц  cmd 1.00/0.04  x=12.2 y=-0.2 курс=-48°
+  [ 70/100] глаза 0.606/0.588 темнота 0.000/0.000  LC 100/100Гц  DNp09 0/0Гц  cmd 1.00/0.01  x=12.2 y=-1.3 курс=-80°
+  [ 80/100] глаза 0.600/0.610 темнота 0.000/0.000  LC 100/100Гц  DNp09 0/67Гц  cmd 0.66/1.00  x=12.0 y=-2.7 курс=-95°
+  [ 90/100] глаза 0.586/0.619 темнота 0.000/0.000  LC 100/100Гц  DNp09 67/0Гц  cmd 0.65/0.68  x=12.2 y=-4.3 курс=-90°
+  [ 99/100] глаза 0.610/0.594 темнота 0.000/0.000  LC 100/100Гц  DNp09 67/0Гц  cmd 0.65/0.54  x=12.3 y=-5.6 курс=-84°
+
+готово за 122 с (1.22 с на цикл)
+лог: /mnt/d/временное использование федей/мозг мухи/output/closed_loop_vision_left_video.csv
+IMAGEIO FFMPEG_WRITER WARNING: input image is not divisible by macro_block_size=16, resizing from (480, 360) to (480, 368) to ensure video compatibility with most codecs and players. To prevent resizing, make your input image divisible by the macro_block_size or set the macro_block_size to 1 (risking incompatibility).
+видео: /mnt/d/временное использование федей/мозг мухи/output/closed_loop_vision_left_video.mp4
+
+==============================================================================
+ ИТОГ
+==============================================================================
+  смещение: dx=+9.75 dy=-6.22 мм, путь 11.57 мм
+  поворот курса за прогон: -93.7°
+  темнота левого глаза:  среднее 0.4181, максимум 1.0000
+  темнота правого глаза: среднее 0.0357, максимум 0.3882
+  cmd_left  среднее 0.908, разброс 0.154
+  cmd_right среднее 0.594, разброс 0.384
+  дистанция до столба: старт 9.8, минимум 2.1, финиш 8.6 мм
+  асимметрия команды (лево-право): среднее +0.3141
+Exception ignored in: <function Renderer.__del__ at 0x71d1a1a04400>
+Traceback (most recent call last):
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/rendering/classic/renderer.py", line 343, in __del__
+    self.close()
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/rendering/classic/renderer.py", line 329, in close
+    self._gl_context.free()
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/egl/__init__.py", line 133, in free
+    EGL.eglDestroyContext(EGL_DISPLAY, self._context)
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/OpenGL/platform/baseplatform.py", line 487, in __call__
+    return self(*args, **named)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/OpenGL/error.py", line 230, in glCheckError
+    raise self._errorClass(
+OpenGL.raw.EGL._errors.EGLError: EGLError(
+	err = EGL_NOT_INITIALIZED,
+	baseOperation = eglDestroyContext,
+	cArguments = (
+		<OpenGL._opaque.EGLDisplay_pointer object at 0x71d15574b7d0>,
+		<OpenGL._opaque.EGLContext_pointer object at 0x71d15574b0d0>,
+	),
+	result = 0
+)
+Exception ignored in: <function GLContext.__del__ at 0x71d1a1fafd80>
+Traceback (most recent call last):
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/egl/__init__.py", line 138, in __del__
+    self.free()
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/egl/__init__.py", line 133, in free
+    EGL.eglDestroyContext(EGL_DISPLAY, self._context)
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/OpenGL/error.py", line 230, in glCheckError
+    raise self._errorClass(
+OpenGL.raw.EGL._errors.EGLError: EGLError(
+	err = EGL_NOT_INITIALIZED,
+	baseOperation = eglDestroyContext,
+	cArguments = (
+		<OpenGL._opaque.EGLDisplay_pointer object at 0x71d15574b7d0>,
+		<OpenGL._opaque.EGLContext_pointer object at 0x71d15574b0d0>,
+	),
+	result = 0
+)
+Exception ignored in: <function Renderer.__del__ at 0x71d1a1a04400>
+Traceback (most recent call last):
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/rendering/classic/renderer.py", line 343, in __del__
+    self.close()
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/rendering/classic/renderer.py", line 329, in close
+    self._gl_context.free()
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/egl/__init__.py", line 133, in free
+    EGL.eglDestroyContext(EGL_DISPLAY, self._context)
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/OpenGL/error.py", line 230, in glCheckError
+    raise self._errorClass(
+OpenGL.raw.EGL._errors.EGLError: EGLError(
+	err = EGL_NOT_INITIALIZED,
+	baseOperation = eglDestroyContext,
+	cArguments = (
+		<OpenGL._opaque.EGLDisplay_pointer object at 0x71d15574b7d0>,
+		<OpenGL._opaque.EGLContext_pointer object at 0x71d14e155cd0>,
+	),
+	result = 0
+)
+Exception ignored in: <function GLContext.__del__ at 0x71d1a1fafd80>
+Traceback (most recent call last):
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/egl/__init__.py", line 138, in __del__
+    self.free()
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/mujoco/egl/__init__.py", line 133, in free
+    EGL.eglDestroyContext(EGL_DISPLAY, self._context)
+  File "/home/fedor/miniconda3/envs/neuromechfly/lib/python3.12/site-packages/OpenGL/error.py", line 230, in glCheckError
+    raise self._errorClass(
+OpenGL.raw.EGL._errors.EGLError: EGLError(
+	err = EGL_NOT_INITIALIZED,
+	baseOperation = eglDestroyContext,
+	cArguments = (
+		<OpenGL._opaque.EGLDisplay_pointer object at 0x71d15574b7d0>,
+		<OpenGL._opaque.EGLContext_pointer object at 0x71d14e155cd0>,
+	),
+	result = 0
+)
