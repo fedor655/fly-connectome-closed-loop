@@ -161,6 +161,37 @@ def self_check() -> None:
                - d2.loc[d2.kind == "between", "corr"].mean()) < 0.2, \
         "разбор выдумывает различие там, где групп нет"
 
+    # третий контроль: ловит именно пропущенное центрирование. Первые два
+    # контроля его не ловят — проверено, что при удалении вычитания mu из
+    # correlations() оба остаются зелёными, потому что групповой сигнал там
+    # различим по форме сам по себе, без вычитания общего фона. Здесь фон
+    # (bg) на два порядка больше группового паттерна и одинаков для ВСЕХ
+    # групп и seed: БЕЗ центрирования любые две строки почти совпадают
+    # (корреляция ~1 что внутри, что между группами — фон маскирует сигнал).
+    # Только вычитание mu вскрывает слабый групповой паттерн под фоном.
+    rng2 = np.random.default_rng(2)
+    bg = rng2.random(200) * 500.0
+    grp_pattern = rng2.normal(0, 5.0, (4, 200))
+    noisy = {s: bg + grp_pattern + rng2.normal(0, 1.0, (4, 200)) for s in (0, 1, 2)}
+    seeds2 = sorted(noisy)
+
+    # премиса: без центрирования within и between неразличимы (оба у пола фона)
+    raw_within = [np.corrcoef(noisy[si][g], noisy[sj][g])[0, 1]
+                  for g in range(4) for i, si in enumerate(seeds2) for sj in seeds2[i + 1:]]
+    raw_between = [np.corrcoef(noisy[s][a], noisy[s][b])[0, 1]
+                   for s in seeds2 for a in range(4) for b in range(a + 1, 4)]
+    assert np.mean(raw_within) > 0.98 and abs(np.mean(raw_within) - np.mean(raw_between)) < 0.05, \
+        "синтетика для третьего контроля не задаёт нужную премису (фон не доминирует)"
+
+    # после центрирования correlations() ОБЯЗАН развести within и between —
+    # если кто-то уберёт вычитание mu из correlations(), этот ассерт упадёт
+    d3 = correlations({"left": noisy})
+    w3 = d3.loc[d3.kind == "within", "corr"].mean()
+    b3 = d3.loc[d3.kind == "between", "corr"].mean()
+    assert w3 > b3 + 0.3, (
+        f"центрирование не выполняется (или неэффективно): within {w3:.3f}, "
+        f"between {b3:.3f} — общий фон не убран")
+
     device = "cpu"
     assets = load_brain_assets(device, verbose=False)
     dn_idx, _ = descending_indices(device)
@@ -201,6 +232,7 @@ def self_check() -> None:
 
 def main():
     device = "cpu"
+    n_groups = 4
     print("=" * 78)
     print(" ЭТАП 0: различает ли выход мозга подмножества зрительного входа")
     print("=" * 78)
@@ -211,7 +243,7 @@ def main():
     resp = {}
     for side in ("left", "right"):
         src = np.array(assets["lc_l"] if side == "left" else assets["lc_r"])
-        groups = split_groups(src, n_groups=4, seed=0)
+        groups = split_groups(src, n_groups=n_groups, seed=0)
         print(f"{side}: {len(src)} проекционных -> группы {[len(g) for g in groups]}")
         resp[side] = {}
         for seed in (0, 1, 2):
@@ -224,20 +256,32 @@ def main():
                   f"{int((resp[side][seed] > 1.0).any(axis=0).sum())} "
                   f"[{time.perf_counter() - t0:.0f} с]")
 
-    df = correlations(resp)
+    df = correlations(resp, groups_per_side=n_groups)
     df.to_csv(out("zone_discrimination.csv"), index=False)
 
     w = df.loc[df.kind == "within", "corr"]
     b = df.loc[df.kind == "between", "corr"]
     t, dof = welch(b, w)
+    floor = -1.0 / (n_groups - 1)
     print("\n" + "=" * 78)
     print(" РЕЗУЛЬТАТ")
     print("=" * 78)
     print(f"  внутригрупповая (потолок шума): {w.mean():+.3f} ± {w.std():.3f}  n={len(w)}")
     print(f"  межгрупповая:                   {b.mean():+.3f} ± {b.std():.3f}  n={len(b)}")
+    print(f"  алгебраический пол межгрупповой при центрировании {n_groups} групп их средним: "
+          f"-1/({n_groups}-1) = {floor:+.3f}")
+    print("  межгрупповая упёрлась в этот пол — величина не измеряет силу различия групп, "
+          "содержателен внутригрупповая (потолок шума) и сам факт разделения")
     print(f"  Уэлч: t={t:+.2f}, dof={dof:.1f}")
-    print(f"  критерий |t| > 3 -> {'ПРОЙДЕН' if abs(t) > 3 else 'НЕ ПРОЙДЕН'}")
-    if abs(t) <= 3:
+    print(f"  оговорка: выборки комбинаторно зависимы ({len(w)} внутригрупповых из 3 "
+          f"seed-векторов на группу, {len(b)} межгрупповых из {n_groups} векторов групп на "
+          f"сторону) — истинная SE занижена и |t| завышен; при консервативной поправке "
+          f"(эффективное n втрое меньше => SE растёт в sqrt(3)) |t| ~ {abs(t) / (3 ** 0.5):.0f}, "
+          f"вывод не меняется")
+    passed = abs(t) > 3 and b.mean() < w.mean()
+    print(f"  критерий |t| > 3 И межгрупповая ниже внутригрупповой -> "
+          f"{'ПРОЙДЕН' if passed else 'НЕ ПРОЙДЕН'}")
+    if not passed:
         print("\n  Карта не строится. Записать отрицательный результат с числами")
         print("  в PROJECT_LOG.md и остановиться.")
     print(f"\nсохранено: {out('zone_discrimination.csv')}")
