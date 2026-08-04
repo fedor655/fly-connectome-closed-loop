@@ -209,58 +209,12 @@ def strips(vals, n=N_STRIPS):
     return np.searchsorted(q, vals).astype(int)
 
 
-def measure_ommatidia_axis():
-    """Какая ось картинки омматидиев отвечает за азимут и где у неё перёд.
+def _ommatidia_centroids():
+    """Центры тяжести (строка, столбец) каждого из 721 омматидиев на карте flygym.
 
-    Постулировать нельзя: нумерация омматидиев в flygym — это пиксели
-    отрендеренного глаза, и связь их осей с полем зрения нигде не объявлена.
-    Меряем: ставим столб прямо по курсу и сбоку, смотрим, какие омматидии
-    темнеют, и берём ту ось, вдоль которой центры тяжести затемнения разошлись
-    сильнее. Знак — по тому, куда сместился «перёд».
-    """
-    from flyreplay import build_scene
-
-    def darkening(xy):
-        sim = build_scene(xy)
-        sim.warmup(0.05)
-        name = next(iter(sim.world.fly_lookup))
-        v = sim.get_ommatidia_readouts(name).sum(axis=2).mean(axis=0)   # (721,)
-        sim.close()
-        return v
-
-    empty = darkening((500.0, 500.0))       # FAR_AWAY: столб унесён
-    front = empty - darkening((6.0, 0.0))
-    sidew = empty - darkening((0.0, 6.0))
-
-    m = np.load(OMMATIDIA_MAP)
-    ids = np.unique(m); ids = ids[ids > 0]
-    flat = m.ravel().astype(np.int64)
-    yy, xx = np.divmod(np.arange(flat.size), m.shape[1])
-    cnt = np.bincount(flat, minlength=722).astype(float)
-    cy = np.bincount(flat, weights=yy, minlength=722)[ids] / cnt[ids]
-    cx = np.bincount(flat, weights=xx, minlength=722)[ids] / cnt[ids]
-    cent = np.stack([cy, cx], axis=1)
-
-    def com(d):
-        w = np.clip(d, 0, None)
-        return (cent * w[:, None]).sum(axis=0) / max(w.sum(), 1e-9), w.sum()
-
-    cf, wf = com(front)
-    cs, ws = com(sidew)
-    assert wf > 0 and ws > 0, "ни одна сцена не затемнила глаз — столб не виден"
-    shift = cf - cs
-    axis = int(np.argmax(np.abs(shift) / cent.std(axis=0)))
-    flip = bool(shift[axis] < 0)      # перёд должен получить БОЛЬШИЙ номер полосы
-    return {"axis": axis, "flip": flip,
-            "contrast": float(abs(shift[axis]) / cent[:, axis].std()),
-            "weight_front": float(wf), "weight_side": float(ws)}
-
-
-def ommatidia_strips(axis, flip, n=N_STRIPS):
-    """Номер полосы для каждого из 721 омматидия.
-
-    В карте flygym id=0 это фон, реальные омматидии пронумерованы 1..721;
-    показание с индексом i соответствует id i+1 — проверяется ассертом.
+    В карте id=0 это фон, реальные омматидии пронумерованы 1..721; показание
+    с индексом i соответствует id i+1 — проверяется ассертом здесь же, один
+    раз на оба места, которые раньше дублировали этот блок построчно.
     """
     m = np.load(OMMATIDIA_MAP)
     ids = np.unique(m); ids = ids[ids > 0]
@@ -269,8 +223,75 @@ def ommatidia_strips(axis, flip, n=N_STRIPS):
     flat = m.ravel().astype(np.int64)
     yy, xx = np.divmod(np.arange(flat.size), m.shape[1])
     cnt = np.bincount(flat, minlength=722).astype(float)
-    c = [np.bincount(flat, weights=yy, minlength=722)[ids] / cnt[ids],
-         np.bincount(flat, weights=xx, minlength=722)[ids] / cnt[ids]][axis]
+    cy = np.bincount(flat, weights=yy, minlength=722)[ids] / cnt[ids]
+    cx = np.bincount(flat, weights=xx, minlength=722)[ids] / cnt[ids]
+    return ids, np.stack([cy, cx], axis=1)
+
+
+def _eye_readout(xy):
+    """Затемнение сетчатки при столбе в точке xy: форма (2, 721).
+
+    Индекс 0 — левый глаз, индекс 1 — правый: это порядок самого
+    `sim.get_ommatidia_readouts` (подтверждено измерением при ревью задачи 4),
+    и он же используется как порядок строк в карте `ommatidia`.
+    """
+    from flyreplay import build_scene
+
+    sim = build_scene(xy)
+    sim.warmup(0.05)
+    name = next(iter(sim.world.fly_lookup))
+    v = sim.get_ommatidia_readouts(name).sum(axis=2)   # (2, 721)
+    sim.close()
+    return v
+
+
+def measure_ommatidia_axis():
+    """Какая ось картинки омматидиев отвечает за азимут и где у неё перёд — на каждый глаз отдельно.
+
+    Постулировать нельзя: нумерация омматидиев в flygym — это пиксели
+    отрендеренного глаза, и связь их осей с полем зрения нигде не объявлена.
+    Меряем раздельно для левого и правого глаза: глаза зеркальны по азимуту
+    (ревью задачи 4 измерило: left flip=False, right flip=True при одинаковой
+    оси), общая на два глаза ориентация меняла бы «перёд» на «зад» на одной
+    из сторон. У каждого глаза своя боковая сцена — столб под глазом снаружи,
+    иначе он окажется за головой и второй глаз даст нулевое затемнение.
+    Ставим столб прямо по курсу и сбоку, смотрим, какие омматидии темнеют, и
+    берём ту ось, вдоль которой центры тяжести затемнения разошлись сильнее.
+    Знак — по тому, куда сместился «перёд».
+    """
+    empty = _eye_readout((500.0, 500.0))            # FAR_AWAY: столб унесён
+    front = empty - _eye_readout((6.0, 0.0))         # общая сцена для обоих глаз
+    side_xy = ((0.0, 6.0), (0.0, -6.0))              # (левому глазу, правому глазу)
+    sidew = np.stack([empty[eye] - _eye_readout(side_xy[eye])[eye] for eye in (0, 1)])
+
+    _, cent = _ommatidia_centroids()
+
+    def com(d):
+        w = np.clip(d, 0, None)
+        return (cent * w[:, None]).sum(axis=0) / max(w.sum(), 1e-9), w.sum()
+
+    names = ("left", "right")
+    result = {}
+    for eye in (0, 1):
+        cf, wf = com(front[eye])
+        cs, ws = com(sidew[eye])
+        assert wf > 0, f"{names[eye]}: столб впереди не затемнил этот глаз"
+        assert ws > 0, f"{names[eye]}: столб сбоку не затемнил этот глаз"
+        shift = cf - cs
+        axis = int(np.argmax(np.abs(shift) / cent.std(axis=0)))
+        flip = bool(shift[axis] < 0)      # перёд должен получить БОЛЬШИЙ номер полосы
+        result[names[eye]] = {
+            "axis": axis, "flip": flip,
+            "contrast": float(abs(shift[axis]) / cent[:, axis].std()),
+            "weight_front": float(wf), "weight_side": float(ws),
+        }
+    return result
+
+
+def ommatidia_strips(axis, flip, n=N_STRIPS):
+    """Номер полосы для каждого из 721 омматидия одного глаза по его оси/перевороту."""
+    _, cent = _ommatidia_centroids()
+    c = cent[:, axis]
     return strips(-c if flip else c, n)
 
 
@@ -280,10 +301,13 @@ def load_or_build():
         z = np.load(CACHE)
         return {k: (str(z[k]) if k == "axis" else z[k]) for k in z.files}
     flyid2i, ann, con = load_tables()      # один раз: parquet на 15 млн строк
-    o = measure_ommatidia_axis()
-    res = {"axis": MAP_AXIS, "ommatidia": ommatidia_strips(o["axis"], o["flip"]),
-           "om_axis": np.array(o["axis"]), "om_flip": np.array(o["flip"]),
-           "om_contrast": np.array(o["contrast"])}
+    o = measure_ommatidia_axis()           # {"left": {...}, "right": {...}} — раздельно по глазам
+    om = np.stack([ommatidia_strips(o[eye]["axis"], o[eye]["flip"])
+                   for eye in ("left", "right")])      # (2, 721): 0 левый глаз, 1 правый
+    res = {"axis": MAP_AXIS, "ommatidia": om,
+           "om_axis": np.array([o["left"]["axis"], o["right"]["axis"]]),
+           "om_flip": np.array([o["left"]["flip"], o["right"]["flip"]]),
+           "om_contrast": np.array([o["left"]["contrast"], o["right"]["contrast"]])}
     col = 0 if MAP_AXIS == "elevation" else 1
     for side in ("left", "right"):
         vp, _, _, _ = field_positions(ann, con, side)
@@ -330,9 +354,13 @@ def self_check() -> None:
 
     m = load_or_build()
     om = m["ommatidia"]
-    assert om.shape == (721,), f"омматидиев должно быть 721, получено {om.shape}"
-    c = np.bincount(om, minlength=N_STRIPS)
-    assert c.min() * 2 >= c.max(), f"полосы поля зрения слишком неравны: {c.tolist()}"
+    assert om.shape == (2, 721), \
+        f"карта омматидиев должна быть (2, 721) — по глазу на строку, получено {om.shape}"
+    eyes = ("left", "right")
+    for eye, name in enumerate(eyes):
+        c = np.bincount(om[eye], minlength=N_STRIPS)
+        assert c.min() * 2 >= c.max(), \
+            f"{name}: полосы поля зрения слишком неравны: {c.tolist()}"
     for side in ("left", "right"):
         idx, st = m[f"{side}_idx"], m[f"{side}_strip"]
         assert len(idx) == len(st) and len(idx) == len(set(idx.tolist()))
@@ -344,11 +372,27 @@ def self_check() -> None:
     print(f"карта: ось {m['axis']}, полос {N_STRIPS}, "
           f"проекционных {len(m['left_idx'])}/{len(m['right_idx'])}")
 
-    assert float(m["om_contrast"]) > 0.3, (
-        f"столб впереди и сбоку затемняют почти одно и то же место сетчатки "
-        f"(контраст {float(m['om_contrast']):.2f}) — ориентация не определена")
-    print(f"  ориентация омматидиев: ось {int(m['om_axis'])}, "
-          f"переворот {bool(m['om_flip'])}, контраст {float(m['om_contrast']):.2f}")
+    for eye, name in enumerate(eyes):
+        contrast = float(m["om_contrast"][eye])
+        assert contrast > 0.3, (
+            f"{name}: столб впереди и сбоку затемняют почти одно и то же место "
+            f"сетчатки (контраст {contrast:.2f}) — ориентация не определена")
+        print(f"  ориентация омматидиев {name}: ось {int(m['om_axis'][eye])}, "
+              f"переворот {bool(m['om_flip'][eye])}, контраст {contrast:.2f}")
+
+    # Главный инвариант (нашло ревью задачи 4): «перёд» обязан попадать в одну
+    # и ту же полосу у обоих глаз. Раньше единая ось/переворот на оба глаза
+    # приводили к тому, что номер полосы означал противоположные физические
+    # направления слева и справа — карта была перевёрнута перёд-зад на одной
+    # из сторон, хотя со стороны коннектома «перёд» у обоих полушарий один.
+    front = _eye_readout((500.0, 500.0)) - _eye_readout((6.0, 0.0))
+    peak = [int(np.argmax(np.bincount(om[eye], weights=np.clip(front[eye], 0, None),
+                                       minlength=N_STRIPS)))
+            for eye in (0, 1)]
+    assert peak[0] == peak[1], (
+        f"«перёд» попадает в разные полосы у двух глаз: left -> полоса {peak[0]}, "
+        f"right -> полоса {peak[1]} — карта омматидиев рассинхронизирована между глазами")
+    print(f"  инвариант «перёд»: left -> полоса {peak[0]}, right -> полоса {peak[1]}")
 
 
 if __name__ == "__main__":
