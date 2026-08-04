@@ -21,6 +21,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flyreplay import (  # noqa: E402
     Recorder, apply_flight, build_scene, eye_view, flight_entry)
+from replay_render import eyes_panel  # noqa: E402
 
 import mujoco  # noqa: E402
 from flygym_demo.complex_terrain import (  # noqa: E402
@@ -114,6 +115,16 @@ def main():
         assert eyes.std() > 1, "картинка с глаз пустая"
         print(f"  глаза: {eyes.shape[1]}×{eyes.shape[0]}, "
               f"яркость {eyes.min()}..{eyes.max()}")
+
+        # Панель с усреднением: шкала нормируется на диапазон записи, а он
+        # бывает нулевым — прогон, где яркость не менялась, не должен ронять
+        # рендер делением на ноль.
+        gray = np.random.default_rng(0).random(
+            (2, sim2.retina.num_ommatidia_per_eye), dtype=np.float32)
+        mu = gray.mean(axis=1)
+        flat = eyes_panel(sim2.retina, gray, mu, float(mu.min()), float(mu.min()))
+        assert flat.shape[1] == eyes.shape[1] and flat.shape[0] > eyes.shape[0]
+        assert eyes_panel(sim2.retina, gray, mu, 0.0, 1.0).shape == flat.shape
         sim2.close()
 
     # Полёт камеры: просмотрщик пишет json, рендер его читает. Окно здесь не

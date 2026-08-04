@@ -269,6 +269,16 @@ python replay_render.py output/closed_loop_vision_left_traj.npz --flight output/
 python replay_render.py output/closed_loop_vision_left_traj.npz --cam eyes
 ```
 
+С `--mean` под каждым глазом добавляется то, что от этой мозаики остаётся мозгу:
+сплошная полоса, залитая одним усреднённым числом (721 омматидий → 1 значение на
+глаз), и его положение внутри диапазона всей записи. Видно, что вся
+пространственная структура схлопывается до двух чисел за цикл — внутриглазной
+ретинотопии в контуре нет, и почему её нет, разобрано в `tools/lc_retinotopy.py`.
+
+```bash
+python replay_render.py output/closed_loop_vision_left_traj.npz --cam eyes --mean
+```
+
 Проверка записи и воспроизведения, без мозга, за секунды:
 
 ```bash
