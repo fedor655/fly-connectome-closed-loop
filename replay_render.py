@@ -1,12 +1,14 @@
 """Рендер mp4 из записанной траектории: любой ракурс, мозг не запускается.
 
-Три источника камеры:
+Источники картинки:
 
     --flight f.json   полёт, снятый мышью в replay_view.py, кадр в кадр
     --cam trackcam    следящая камера прогона (она же по умолчанию)
-    --cam l_eye_cam   то, что видит левый глаз мухи
+    --cam l_eye_cam   камера на месте левого глаза, обычная картинка
+    --cam eyes        то, что реально видит мозг: 721 омматидий на глаз
+                      в оттенках серого, левый | правый
 
-    .venv/bin/python replay_render.py output/..._traj.npz --cam r_eye_cam -o eye.mp4
+    .venv/bin/python replay_render.py output/..._traj.npz --cam eyes -o eyes.mp4
 """
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ import imageio.v2 as imageio
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flyreplay import apply_flight, build_scene  # noqa: E402  (ставит MUJOCO_GL)
+from flyreplay import apply_flight, build_scene, eye_view  # noqa: E402
 
 import mujoco  # noqa: E402
 
@@ -38,7 +40,9 @@ def main():
     ap.add_argument("npz", help="запись прогона (output/*_traj.npz)")
     ap.add_argument("-o", "--out", default=None, help="mp4 (по умолчанию рядом с npz)")
     ap.add_argument("--flight", default=None, help="json полёта камеры из replay_view.py")
-    ap.add_argument("--cam", default="trackcam", help="встроенная камера модели")
+    ap.add_argument("--cam", default="trackcam",
+                    help="встроенная камера модели либо «eyes» — 721 омматидий "
+                         "на глаз в оттенках серого, как их видит мозг")
     ap.add_argument("--res", type=int, nargs=2, default=(640, 480), metavar=("W", "H"))
     ap.add_argument("--fps", type=float, default=None,
                     help="кадров в секунду в mp4 (с --flight берётся из json)")
@@ -64,7 +68,10 @@ def main():
     m.vis.global_.offwidth = max(m.vis.global_.offwidth, w)
     m.vis.global_.offheight = max(m.vis.global_.offheight, h)
 
-    if args.flight:
+    eyes = args.cam == "eyes"
+    fly_name = next(iter(sim.world.fly_lookup))
+
+    if args.flight and not eyes:
         flight = json.loads(Path(args.flight).read_text())
         fps = args.fps or flight.get("fps", 30.0)
         cam = mujoco.MjvCamera()
@@ -72,21 +79,27 @@ def main():
         what = f"полёт из {args.flight}, {len(steps)} кадров"
     else:
         fps = args.fps or 25.0
-        cam = resolve_camera(m, args.cam)
+        cam = None if eyes else resolve_camera(m, args.cam)
         step = max((1.0 / fps) * args.speed / frame_dt, 1e-9)
         steps = [(int(args.lo + k * step), None)
                  for k in range(int((hi - args.lo) / step))]
-        what = f"камера {cam}, замедление {args.speed:g}×"
+        what = ("глаза мухи" if eyes else f"камера {cam}") + \
+               f", замедление {args.speed:g}×"
 
-    suffix = Path(args.flight).stem if args.flight else args.cam
+    suffix = Path(args.flight).stem if args.flight and not eyes else args.cam
     out_path = args.out or f"{Path(args.npz).with_suffix('')}_{suffix}.mp4"
-    renderer = mujoco.Renderer(m, height=h, width=w)
-    print(f"{what} -> {out_path} ({len(steps)} кадров {w}×{h} @ {fps:g} fps)")
+    # Размер картинки с глаз задаёт сетка омматидиев, --res к ней не относится
+    renderer = None if eyes else mujoco.Renderer(m, height=h, width=w)
+    size = "512×904" if eyes else f"{w}×{h}"
+    print(f"{what} -> {out_path} ({len(steps)} кадров {size} @ {fps:g} fps)")
 
     with imageio.get_writer(out_path, fps=fps, macro_block_size=1) as writer:
         for i, entry in steps:
             d.qpos[:] = qpos[min(max(i, 0), n - 1)]
             mujoco.mj_forward(m, d)
+            if eyes:
+                writer.append_data(eye_view(sim, fly_name))
+                continue
             if entry is not None:
                 apply_flight(cam, entry)
             renderer.update_scene(d, camera=cam)

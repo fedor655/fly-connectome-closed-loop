@@ -249,19 +249,24 @@ python closed_loop_vision.py --cycles 100 --record --tag left
 .venv/bin/mjpython replay_view.py output/closed_loop_vision_left_traj.npz
 ```
 
-Пробел — пуск/пауза, `→`/`←` — кадр, PgUp/PgDn — ±25, `↑`/`↓` — скорость,
+Пробел — пуск/пауза, `→`/`←` — кадр, `,`/`.` — ±25, `↑`/`↓` — скорость,
 `B` — реверс, `T` — камера за мухой или свободная, `H` — в начало,
-`R` — запись полёта камеры в json.
+`R` — запись полёта камеры в json, `E` — картинка с глаз в углу окна.
 
-Рендер mp4 из записи: снятый полёт кадр в кадр, либо встроенная камера, включая
-глаза мухи.
+Рендер mp4 из записи: снятый полёт кадр в кадр, либо встроенная камера.
 
 ```bash
 python replay_render.py output/closed_loop_vision_left_traj.npz --flight output/closed_loop_vision_left_flight.json
 ```
 
+Отдельно — то, что реально видит мозг: 721 омматидий на глаз в оттенках серого,
+левый глаз слева, правый справа. Это та самая величина, которую
+`closed_loop_vision.py` усредняет в одно число на глаз и подаёт зрительным
+нейронам. `--cam l_eye_cam` в отличие от неё даёт обычную картинку с камеры на
+месте глаза, без сетки омматидиев.
+
 ```bash
-python replay_render.py output/closed_loop_vision_left_traj.npz --cam l_eye_cam
+python replay_render.py output/closed_loop_vision_left_traj.npz --cam eyes
 ```
 
 Проверка записи и воспроизведения, без мозга, за секунды:

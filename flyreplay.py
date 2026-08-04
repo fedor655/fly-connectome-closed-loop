@@ -79,6 +79,23 @@ class Recorder:
         return path
 
 
+def eye_view(sim: Simulation, fly_name: str, step: int = 1) -> np.ndarray:
+    """Что видят глаза: 721 омматидий на глаз, серым, левый | правый.
+
+    Два канала омматидия (yellow/pale) складываются: ненулевой у него ровно
+    один, так что сумма и есть яркость. Именно эта величина идёт на вход мозгу
+    в closed_loop_vision.py, только там она ещё усредняется в одно число на глаз.
+
+    step прореживает картинку для оверлея в окне: 512x904 в углу не нужны.
+    """
+    r = sim.get_ommatidia_readouts(fly_name)                    # (2, 721, 2)
+    eyes = [sim.retina.hex_pxls_to_human_readable(r[k].sum(axis=1), color_8bit=True)
+            for k in (0, 1)]
+    gap = np.full((eyes[0].shape[0], 4), 255, np.uint8)
+    gray = np.hstack([eyes[0], gap, eyes[1]])[::step, ::step]
+    return np.repeat(gray[:, :, None], 3, axis=2)
+
+
 def flight_entry(cam, frame: int) -> dict:
     """Состояние камеры одним кадром полёта. Пишет replay_view, читает replay_render.
 

@@ -19,7 +19,8 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flyreplay import Recorder, apply_flight, build_scene, flight_entry  # noqa: E402
+from flyreplay import (  # noqa: E402
+    Recorder, apply_flight, build_scene, eye_view, flight_entry)
 
 import mujoco  # noqa: E402
 from flygym_demo.complex_terrain import (  # noqa: E402
@@ -104,6 +105,15 @@ def main():
         assert np.abs(render(sim2).astype(int)
                       - live[max(live)].astype(int)).max() > 0, \
             "проверка ничего не проверяет: разные кадры вышли одинаковыми"
+        # Что видят глаза: 721 омматидий на глаз в оттенках серого. step — путь
+        # оверлея в просмотрщике, там окно проверить нечем.
+        eyes = eye_view(sim2, next(iter(sim2.world.fly_lookup)))
+        small = eye_view(sim2, next(iter(sim2.world.fly_lookup)), step=3)
+        assert eyes.shape == (sim2.retina.nrows, 2 * sim2.retina.ncols + 4, 3)
+        assert eyes.dtype == np.uint8 and small.shape[0] == -(-eyes.shape[0] // 3)
+        assert eyes.std() > 1, "картинка с глаз пустая"
+        print(f"  глаза: {eyes.shape[1]}×{eyes.shape[0]}, "
+              f"яркость {eyes.min()}..{eyes.max()}")
         sim2.close()
 
     # Полёт камеры: просмотрщик пишет json, рендер его читает. Окно здесь не

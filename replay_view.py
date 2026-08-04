@@ -31,7 +31,7 @@ import numpy as np
 os.environ["MUJOCO_GL"] = "glfw"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flyreplay import build_scene, flight_entry  # noqa: E402
+from flyreplay import build_scene, eye_view, flight_entry  # noqa: E402
 
 import mujoco  # noqa: E402
 import mujoco.viewer  # noqa: E402
@@ -39,14 +39,15 @@ import mujoco.viewer  # noqa: E402
 # Коды GLFW. Простые буквы не заняты встроенными горячими клавишами simulate,
 # в отличие от Tab (панели), Backspace (сброс) и Esc (свободная камера).
 K_SPACE, K_RIGHT, K_LEFT, K_DOWN, K_UP = 32, 262, 263, 264, 265
-K_PGUP, K_PGDN = 266, 267
-K_B, K_H, K_R, K_T = 66, 72, 82, 84
+K_COMMA, K_PERIOD = 44, 46
+K_B, K_E, K_H, K_R, K_T = 66, 69, 72, 82, 84
 
 KEYS_HELP = """
-  Пробел      пуск / пауза          B    реверс
-  → / ←       кадр вперёд / назад   T    камера: за мухой / свободная
-  PgUp/PgDn   ±25 кадров            H    в начало
-  ↑ / ↓       скорость ×2 / ÷2      R    запись полёта камеры в json
+  Пробел    пуск / пауза          B    реверс
+  → / ←     кадр вперёд / назад   T    камера: за мухой / свободная
+  , / .     ±25 кадров            H    в начало
+  ↑ / ↓     скорость ×2 / ÷2      R    запись полёта камеры в json
+                                  E    что видят глаза мухи, в углу
 """
 
 
@@ -86,7 +87,8 @@ def main():
     print(KEYS_HELP)
 
     state = {"i": 0.0, "play": True, "speed": args.speed, "dir": 1,
-             "track": False, "rec": None}
+             "track": False, "rec": None, "eyes": False}
+    fly_name = next(iter(sim.world.fly_lookup))
 
     def key(code):
         if code == K_SPACE:
@@ -95,10 +97,12 @@ def main():
             state["i"], state["play"] = state["i"] + 1, False
         elif code == K_LEFT:
             state["i"], state["play"] = state["i"] - 1, False
-        elif code == K_PGUP:
+        elif code == K_PERIOD:
             state["i"], state["play"] = state["i"] + 25, False
-        elif code == K_PGDN:
+        elif code == K_COMMA:
             state["i"], state["play"] = state["i"] - 25, False
+        elif code == K_E:
+            state["eyes"] = not state["eyes"]
         elif code == K_UP:
             state["speed"] *= 2
         elif code == K_DOWN:
@@ -123,7 +127,8 @@ def main():
 
     with mujoco.viewer.launch_passive(m, d, key_callback=key) as viewer:
         prev = time.perf_counter()
-        next_shot = 0.0
+        next_shot = next_eyes = 0.0
+        eyes_img = None
         while viewer.is_running():
             now = time.perf_counter()
             dt, prev = now - prev, now
@@ -148,12 +153,37 @@ def main():
                 if state["rec"] is not None and now >= next_shot:
                     next_shot = now + 1.0 / args.flight_fps
                     state["rec"].append(flight_entry(cam, i))
-            speed = f"{state['speed'] * state['dir']:+g}×"
+            # Оверлей рисуется ASCII-шрифтом MuJoCo: кириллица, знаки × и —
+            # выходят пустыми квадратами.
+            speed = f"{state['speed'] * state['dir']:+g}x"
             if not state["play"]:
-                speed += "  пауза"
-            flight = "—" if state["rec"] is None else f"ЗАПИСЬ {len(state['rec'])}"
-            viewer.set_texts((None, None, "кадр\nвремя\nскорость\nполёт",
-                              f"{i}/{n - 1}\n{t[i] - t[0]:.3f} с\n{speed}\n{flight}"))
+                speed += "  PAUSED"
+            flight = "-" if state["rec"] is None else f"REC {len(state['rec'])}"
+            viewer.set_texts((None, None, "frame\ntime\nspeed\nflight",
+                              f"{i}/{n - 1}\n{t[i] - t[0]:.3f} s\n{speed}\n{flight}"))
+
+            if state["eyes"] and now >= next_eyes:
+                next_eyes = now + 0.1        # 10 Гц: readout стоит около 10 мс
+                try:
+                    eyes_img = eye_view(sim, fly_name, step=3)
+                except Exception as e:
+                    # Глаза рисуются вторым офскрин-контекстом поверх живого
+                    # окна. Если драйвер этого не даёт — выключаем показ, а не
+                    # роняем просмотр.
+                    print(f"[глаза] не вышло, показ выключен: {e}")
+                    state["eyes"] = False
+            vp = viewer.viewport
+            if (state["eyes"] and eyes_img is not None
+                    and vp.width > eyes_img.shape[1] + 20
+                    and vp.height > eyes_img.shape[0] + 20):
+                eh, ew = eyes_img.shape[:2]
+                viewer.set_images((mujoco.MjrRect(vp.width - ew - 10,
+                                                  vp.height - eh - 10, ew, eh),
+                                   eyes_img))
+            elif eyes_img is not None:
+                eyes_img = None
+                viewer.clear_images()
+
             viewer.sync()
             time.sleep(0.002)
 
