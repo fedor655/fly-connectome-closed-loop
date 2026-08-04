@@ -213,6 +213,22 @@ LOG_COLUMNS = ["cycle", "t_sec", "eye_left_int", "eye_right_int",
                "thorax_x_mm", "thorax_y_mm", "heading_deg", "dist_to_pillar_mm"]
 
 
+def strip_intensity(raw, om_strip, n_strips):
+    """Средняя яркость по полосам поля зрения: (2, 721) -> (2, n_strips).
+
+    Поправка А: карта омматидиев `om_strip` тоже формы (2, 721) — глаза
+    зеркальны по азимуту (левый flip=False, правый flip=True), поэтому у
+    каждого глаза своя строка карты, и сравнивать нужно `raw[k]` со
+    `om_strip[k]`, а не с общей картой на оба глаза.
+
+    При n_strips=1 это ровно прежнее .mean(axis=1) — скалярный режим остаётся
+    частным случаем пространственного, а не отдельной веткой кода, которая
+    могла бы с ним разойтись.
+    """
+    return np.stack([[raw[k][om_strip[k] == s].mean() for s in range(n_strips)]
+                     for k in (0, 1)])
+
+
 def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
               cycles=100, autocal=15, cal_brain_ms=3000.0, seed=0,
               tau_eye=TAU_EYE_MS, tau_cmd=TAU_CMD_MS,
