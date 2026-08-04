@@ -289,6 +289,20 @@ python replay_render.py output/closed_loop_vision_left_traj.npz --cam eyes --mea
 python test_replay.py
 ```
 
+В `output/` лежит пример: прогон `replaydemo` на 40 циклов и всё, что из его
+записи отрендерено без единого повторного запуска мозга.
+
+| Файл | Что это |
+|---|---|
+| `closed_loop_vision_replaydemo_traj.npz` | сама запись: 600 кадров, 447 КБ |
+| `closed_loop_vision_replaydemo.csv` | лог того же прогона |
+| `replaydemo_track.mp4` | следящая камера, как в обычном `--video` |
+| `replaydemo_orbit.mp4` | облёт на 360° по `replaydemo_orbit_flight.json` |
+| `replaydemo_eye.mp4` | камера на месте левого глаза |
+| `replaydemo_eyes.mp4` | 721 омматидий на глаз, серым |
+| `replaydemo_eyes_mean.mp4` | то же плюс полоса с усреднением — вход мозга |
+| `closed_loop_vision_replaydemo_flight.json` | полёт, снятый мышью в просмотрщике |
+
 ---
 
 ## Состав репозитория
