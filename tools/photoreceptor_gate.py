@@ -31,7 +31,13 @@ import run_pytorch as rp  # noqa: E402
 DT = 0.1
 SIM_MS = 1500.0
 TRANSIENT_MS = 300.0
-RATES_HZ = [0.0, 50.0, 100.0, 200.0]
+# Первый заход брал 50-200 Гц и показал, что сигнал глохнет за ламиной.
+# Расчёт установившегося режима объяснил почему: ламине нужно около 5091/12.5
+# то есть примерно 400 Гц на фоторецепторах, а мы давали вчетверо меньше.
+# Фоторецепторы получают Пуассон напрямую (wScale*scalePoisson = 68.75 мВ на
+# спайк, порог 7 мВ), поэтому они выдают почти всё, что им подали, и высокие
+# частоты для них — вопрос настройки, а не физиологии.
+RATES_HZ = [0.0, 200.0, 400.0, 600.0, 900.0]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -54,17 +60,20 @@ def main():
     def idx_of(mask):
         return [flyid2i[int(x)] for x in ann.loc[mask, "root_id"]]
 
-    # ступени зрительного пути
+    # Стимулируем ЛЕВЫЙ глаз и меряем только левые ступени. Первый заход
+    # усреднял по обоим полушариям при односторонней стимуляции — половина
+    # нейронов не получала ничего и вдвое занижала все числа.
+    L = ann["side"] == "left"
     photo_l = idx_of((ann["super_class"] == "sensory") &
-                     (ann["cell_class"] == "visual") & (ann["side"] == "left"))
+                     (ann["cell_class"] == "visual") & L)
     stages = {
-        "ламина L1-L5": idx_of(ct.str.match(r"^L[1-5]$")),
-        "медулла Mi": idx_of(ct.str.match(r"^Mi\d")),
-        "медулла Tm": idx_of(ct.str.match(r"^Tm\d")),
-        "движение T4": idx_of(ct.str.match(r"^T4")),
-        "движение T5": idx_of(ct.str.match(r"^T5")),
-        "зрит. проекц.": idx_of(ann["super_class"] == "visual_projection"),
-        "нисходящие": idx_of(ann["super_class"] == "descending"),
+        "ламина L1-L5": idx_of(ct.str.match(r"^L[1-5]$") & L),
+        "медулла Mi": idx_of(ct.str.match(r"^Mi\d") & L),
+        "медулла Tm": idx_of(ct.str.match(r"^Tm\d") & L),
+        "движение T4": idx_of(ct.str.match(r"^T4") & L),
+        "движение T5": idx_of(ct.str.match(r"^T5") & L),
+        "зрит. проекц.": idx_of((ann["super_class"] == "visual_projection") & L),
+        "нисходящие": idx_of((ann["super_class"] == "descending") & L),
     }
     print(f"фоторецепторов левого глаза: {len(photo_l)}")
     for k, v in stages.items():
@@ -87,6 +96,7 @@ def main():
         gen.manual_seed(777)
 
         acc = {k: torch.zeros((), device=DEVICE) for k in tens}
+        act = {k: torch.zeros(len(stages[k]), device=DEVICE) for k in tens}
         n_tr, n_me = int(TRANSIENT_MS / DT), int(SIM_MS / DT)
         t0 = time.perf_counter()
         with torch.no_grad():
@@ -95,12 +105,19 @@ def main():
                     rates, cond, delay_buf, spikes, v, refrac, generator=gen)
                 if step >= n_tr:
                     for k, t in tens.items():
-                        acc[k] += spikes[0, t].sum()
+                        s = spikes[0, t]
+                        acc[k] += s.sum()
+                        act[k] += s
         t_sec = SIM_MS / 1000.0
         vals = {k: float(acc[k]) / len(stages[k]) / t_sec for k in tens}
+        frac = {k: float((act[k] > 0).float().mean()) for k in tens}
         print(f"  {rate:>9.0f}" + "".join(f"{vals.get(k, float('nan')):>15.2f}" for k in names)
               + f"   [{time.perf_counter() - t0:.0f} с]")
-        rows.append({"stim_rate_hz": rate, **{k: vals.get(k) for k in names}})
+        print(f"  {'доля активных':>9s}"
+              + "".join(f"{frac.get(k, float('nan')):>14.1%} " for k in names))
+        rows.append({"stim_rate_hz": rate,
+                     **{k: vals.get(k) for k in names},
+                     **{f"active_{k}": frac.get(k) for k in names}})
 
     pd.DataFrame(rows).to_csv(out("photoreceptor_gate.csv"), index=False)
     print(f"\nсохранено: {out('photoreceptor_gate.csv')}")
