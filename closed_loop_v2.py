@@ -43,6 +43,7 @@ add_fly_brain_to_path()
 from benchmark import path_comp, path_con, path_wt  # noqa: E402
 import run_pytorch as rp  # noqa: E402
 
+from flyreplay import FAR_AWAY, Recorder  # noqa: E402
 from flygym.compose import FlatGroundWorld  # noqa: E402
 from flygym.simulation import Simulation  # noqa: E402
 from flygym.utils.math import Rotation3D  # noqa: E402
@@ -213,6 +214,11 @@ def main():
                     help="метка прогона для имён выходных файлов")
     ap.add_argument("--video", action="store_true",
                     help="писать mp4 со следящей камерой")
+    ap.add_argument("--record", action="store_true",
+                    help="писать траекторию в npz: потом её смотрят "
+                         "replay_view.py и рендерят replay_render.py")
+    ap.add_argument("--record-every", type=int, default=10,
+                    help="каждый N-й шаг физики (шаг 0.1 мс)")
     ap.add_argument("--tau", type=float, default=TAU_CMD_MS,
                     help="постоянная сглаживания команды, мс (0 — без сглаживания)")
     ap.add_argument("--fb-base", type=float, default=FB_BASE_HZ,
@@ -262,6 +268,8 @@ def main():
         sim.set_renderer(cam, camera_res=(360, 480),
                          playback_speed=0.2, output_fps=25)
         print("[тело] запись видео включена")
+    # Столба в этой сцене нет — при воспроизведении он уносится на FAR_AWAY
+    rec = Recorder(sim, every=args.record_every) if args.record else None
     legs = fly.get_legs_order()
     n_left = sum(1 for leg in legs if str(leg).startswith("l"))
     print(f"[тело] левых лапок: {n_left} из {len(legs)}")
@@ -397,6 +405,8 @@ def main():
                 action = controller.step(descending, obs)
                 apply_locomotion_action(sim, fly.name, action)
                 sim.step()
+                if rec:
+                    rec.grab()
                 if args.video:
                     sim.render_as_needed()
 
@@ -438,6 +448,11 @@ def main():
         video_path = out(f"closed_loop_v2_{args.tag}.mp4")
         sim.renderer.save_video(video_path)
         print(f"видео: {video_path}")
+
+    if rec:
+        traj_path = rec.save(out(f"closed_loop_v2_{args.tag}_traj.npz"),
+                             (FAR_AWAY, FAR_AWAY))
+        print(f"траектория: {traj_path}")
 
     # --- сводка по критериям приёмки ---
     df = pd.DataFrame(rows, columns=headers)

@@ -50,10 +50,9 @@ add_fly_brain_to_path()
 from benchmark import path_comp, path_con, path_wt  # noqa: E402
 import run_pytorch as rp  # noqa: E402
 
-from flygym.compose import FlatGroundWorld  # noqa: E402
+from flyreplay import FAR_AWAY, PillarWorld, Recorder  # noqa: E402
 from flygym.simulation import Simulation  # noqa: E402
 from flygym.utils.math import Rotation3D  # noqa: E402
-from flygym.utils.mjcf import GEOM_TYPES  # noqa: E402
 from flygym_demo.complex_terrain import (  # noqa: E402
     HybridControllerObservation,
     HybridTurningController,
@@ -102,23 +101,8 @@ DARK_GAIN = 6.0
 # дальше падает. Берём 100 мс — почти максимум при меньшей задержке.
 TAU_EYE_MS = 100.0
 
-PILLAR_R = 1.2
-PILLAR_H = 8.0
-FAR_AWAY = 500.0          # куда убирать столб в контрольной сцене
-
-
-class PillarWorld(FlatGroundWorld):
-    """Плоский грунт и один тёмный столб."""
-
-    def __init__(self, x: float, y: float) -> None:
-        super().__init__(name="pillar_world", half_size=300)
-        self.mjcf_root.worldbody.add_geom(
-            type=GEOM_TYPES["cylinder"], name="pillar",
-            size=[PILLAR_R, PILLAR_H / 2, 0.0],
-            pos=[x, y, PILLAR_H / 2],
-            rgba=[0.05, 0.05, 0.05, 1.0],
-            contype=0, conaffinity=0,
-        )
+# Сцена и запись траектории живут в flyreplay.py: тем же кодом её пересобирает
+# просмотрщик, иначе запись и воспроизведение разъедутся.
 
 
 def _select_population(device, weights, n, flyid2i, ann, verbose):
@@ -233,7 +217,7 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
               cycles=100, autocal=15, cal_brain_ms=3000.0, seed=0,
               tau_eye=TAU_EYE_MS, tau_cmd=TAU_CMD_MS,
               lc_base=None, lc_span=None,
-              video_path=None, verbose=True):
+              video_path=None, traj_path=None, traj_every=10, verbose=True):
     """Один прогон. Возвращает (DataFrame лога, словарь сводки)."""
     px = FAR_AWAY if no_pillar else pillar_x
     py = FAR_AWAY if no_pillar else pillar_y
@@ -293,11 +277,15 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
     thorax_idx = body_order.index(bodyseg_cls("c_thorax"))
     thorax_body_id = sim._internal_bodyids_by_fly[fly.name][thorax_idx]
 
+    rec = Recorder(sim, every=traj_every) if traj_path else None
+
     def step_body(cmd):
         for _ in range(inner_phys):
             obs = HybridControllerObservation.from_sim(sim, fly.name)
             apply_locomotion_action(sim, fly.name, controller.step(cmd, obs))
             sim.step()
+            if rec:
+                rec.grab()
             if video_path:
                 sim.render_as_needed()
 
@@ -392,6 +380,8 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
 
     if video_path:
         sim.renderer.save_video(video_path)
+    if rec:
+        rec.save(traj_path, (px, py))
     sim.close()
 
     turn = df["heading_deg"].iloc[-1] - df["heading_deg"].iloc[0]
@@ -442,6 +432,11 @@ def main():
                     help="контроль: столб убран, поле зрения пустое")
     ap.add_argument("--tag", type=str, default="vision")
     ap.add_argument("--video", action="store_true")
+    ap.add_argument("--record", action="store_true",
+                    help="писать траекторию в npz: потом её смотрят "
+                         "replay_view.py и рендерят replay_render.py")
+    ap.add_argument("--record-every", type=int, default=10,
+                    help="каждый N-й шаг физики (шаг 0.1 мс)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--autocal", type=int, default=15)
     ap.add_argument("--cal-brain-ms", type=float, default=3000.0)
@@ -467,19 +462,23 @@ def main():
 
     assets = load_brain_assets(device, readout=args.readout, stim=args.stim)
     video_path = out(f"closed_loop_vision_{args.tag}.mp4") if args.video else None
+    traj_path = out(f"closed_loop_vision_{args.tag}_traj.npz") if args.record else None
 
     df, s = run_trial(assets, device, pillar_y=args.pillar_y, no_pillar=args.no_pillar,
                       pillar_x=args.pillar_x, cycles=args.cycles, autocal=args.autocal,
                       cal_brain_ms=args.cal_brain_ms, seed=args.seed,
                       tau_eye=args.tau_eye, tau_cmd=args.tau_cmd,
                       lc_base=args.lc_base, lc_span=args.lc_span,
-                      video_path=video_path)
+                      video_path=video_path, traj_path=traj_path,
+                      traj_every=args.record_every)
 
     out_csv = out(f"closed_loop_vision_{args.tag}.csv")
     df.round(4).to_csv(out_csv, index=False)
     print(f"\nготово за {s['elapsed_s']:.0f} с, лог: {out_csv}")
     if video_path:
         print(f"видео: {video_path}")
+    if traj_path:
+        print(f"траектория: {traj_path}")
 
     print("\n" + "=" * 78)
     print(" ИТОГ")
