@@ -54,3 +54,11 @@ __pycache__/
 
 # Производное от аннотаций FlyWire
 output/retina_zone_map.npz
+
+# Промежуточные логи прогонов гибрида
+output/hvp*.log
+
+# Разложение колонок flyvis по нейронам: root_id на каждую строку, то есть
+# по-нейронное производное от аннотаций FlyWire — та же причина, что выше.
+# Сводка по типам (column_assignment_stats.csv) — агрегат, её держим.
+output/column_assignment.csv
