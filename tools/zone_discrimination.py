@@ -8,6 +8,7 @@
 используется, чтобы шлагбаум не зависел от её правильности.
 """
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from flypaths import add_fly_brain_to_path, out  # noqa: E402
 from tools.zone_probe import descending_indices  # noqa: E402
+from tools.replicate_vision import welch  # noqa: E402
 from closed_loop_vision import DT_BRAIN_MS, load_brain_assets  # noqa: E402
 
 add_fly_brain_to_path()
@@ -103,6 +105,34 @@ def probe_batched(weights, n, dn_idx, stim_sets, rate_hz, seed, device,
     return np.array(acc.tolist()) / (measure_ms / 1000.0)
 
 
+def correlations(resp, groups_per_side=4):
+    """Внутригрупповые и межгрупповые корреляции откликов.
+
+    resp[side][seed] — матрица (группа, нисходящий). Центрирование по каждому
+    нисходящему убирает общую составляющую: вопрос не в том, кто вообще горит
+    от зрения, а в том, различается ли КАРТИНА по группам.
+    """
+    rows = []
+    for side, per_seed in resp.items():
+        allc = np.concatenate(list(per_seed.values()), axis=0)   # (seed*группа, DN)
+        keep = allc.max(axis=0) > 1.0
+        assert keep.sum() >= 20, f"{side}: активных нисходящих всего {keep.sum()}"
+        mu = allc[:, keep].mean(axis=0)
+        cen = {s: m[:, keep] - mu for s, m in per_seed.items()}
+        seeds = sorted(cen)
+        for g in range(groups_per_side):
+            for i, si in enumerate(seeds):
+                for sj in seeds[i + 1:]:
+                    rows.append({"kind": "within", "side": side, "pair": f"g{g}:{si}-{sj}",
+                                 "corr": float(np.corrcoef(cen[si][g], cen[sj][g])[0, 1])})
+        for s in seeds:
+            for a in range(groups_per_side):
+                for b in range(a + 1, groups_per_side):
+                    rows.append({"kind": "between", "side": side, "pair": f"s{s}:g{a}-g{b}",
+                                 "corr": float(np.corrcoef(cen[s][a], cen[s][b])[0, 1])})
+    return pd.DataFrame(rows)
+
+
 def self_check() -> None:
     """Батч обязан давать элементам независимый шум и тот же мозг.
 
@@ -113,6 +143,24 @@ def self_check() -> None:
     групп — на 0.014. Требуется именно это: элементы батча независимы, а одна
     и та же группа в батче и поодиночке даёт согласованный отклик.
     """
+    # контроль разбора статистики идёт первым: он не требует мозга, это чистая
+    # арифметика numpy, и падать на нём нужно за секунду, а не после ~12 минут
+    # мозговой части ниже.
+    rng = np.random.default_rng(0)
+    base = rng.random((4, 200)) * 50.0
+    fake = {"left": {s: base + rng.normal(0, 1.0, base.shape) for s in (0, 1, 2)}}
+    df = correlations(fake)
+    w = df.loc[df.kind == "within", "corr"].mean()
+    b = df.loc[df.kind == "between", "corr"].mean()
+    assert w > b + 0.3, f"разбор не отличает группы на синтетике: within {w:.3f}, between {b:.3f}"
+    # обратный контроль: если групп нет, разбор не должен их выдумывать
+    flat = {"left": {s: np.tile(base.mean(axis=0), (4, 1))
+                     + rng.normal(0, 1.0, base.shape) for s in (0, 1, 2)}}
+    d2 = correlations(flat)
+    assert abs(d2.loc[d2.kind == "within", "corr"].mean()
+               - d2.loc[d2.kind == "between", "corr"].mean()) < 0.2, \
+        "разбор выдумывает различие там, где групп нет"
+
     device = "cpu"
     assets = load_brain_assets(device, verbose=False)
     dn_idx, _ = descending_indices(device)
@@ -151,5 +199,52 @@ def self_check() -> None:
     print("самопроверка батчевого зонда: ОК")
 
 
+def main():
+    device = "cpu"
+    print("=" * 78)
+    print(" ЭТАП 0: различает ли выход мозга подмножества зрительного входа")
+    print("=" * 78)
+    assets = load_brain_assets(device)
+    dn_idx, _ = descending_indices(device)
+    print(f"нисходящих под наблюдением: {len(dn_idx)}")
+
+    resp = {}
+    for side in ("left", "right"):
+        src = np.array(assets["lc_l"] if side == "left" else assets["lc_r"])
+        groups = split_groups(src, n_groups=4, seed=0)
+        print(f"{side}: {len(src)} проекционных -> группы {[len(g) for g in groups]}")
+        resp[side] = {}
+        for seed in (0, 1, 2):
+            t0 = time.perf_counter()
+            resp[side][seed] = probe_batched(
+                assets["weights"], assets["n"], dn_idx, list(groups),
+                rate_hz=WORK_RATE_HZ, seed=1000 + seed, device=device)
+            print(f"  seed={seed}: средний отклик "
+                  f"{resp[side][seed].mean():.2f} Гц, активных "
+                  f"{int((resp[side][seed] > 1.0).any(axis=0).sum())} "
+                  f"[{time.perf_counter() - t0:.0f} с]")
+
+    df = correlations(resp)
+    df.to_csv(out("zone_discrimination.csv"), index=False)
+
+    w = df.loc[df.kind == "within", "corr"]
+    b = df.loc[df.kind == "between", "corr"]
+    t, dof = welch(b, w)
+    print("\n" + "=" * 78)
+    print(" РЕЗУЛЬТАТ")
+    print("=" * 78)
+    print(f"  внутригрупповая (потолок шума): {w.mean():+.3f} ± {w.std():.3f}  n={len(w)}")
+    print(f"  межгрупповая:                   {b.mean():+.3f} ± {b.std():.3f}  n={len(b)}")
+    print(f"  Уэлч: t={t:+.2f}, dof={dof:.1f}")
+    print(f"  критерий |t| > 3 -> {'ПРОЙДЕН' if abs(t) > 3 else 'НЕ ПРОЙДЕН'}")
+    if abs(t) <= 3:
+        print("\n  Карта не строится. Записать отрицательный результат с числами")
+        print("  в PROJECT_LOG.md и остановиться.")
+    print(f"\nсохранено: {out('zone_discrimination.csv')}")
+
+
 if __name__ == "__main__":
-    self_check()
+    if "--check" in sys.argv:
+        self_check()
+    else:
+        main()
