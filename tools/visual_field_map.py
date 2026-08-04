@@ -49,6 +49,7 @@ from benchmark import path_comp, path_con  # noqa: E402
 
 VOXEL_NM = np.array([4.0, 4.0, 40.0])
 N_ITER = 12
+SNAP_ITERS = (1, 2, 3, 5, 8, 12)
 REPORT_TYPES = ["L1", "L2", "L3", "L5", "Mi1", "Mi4", "Mi9", "Tm1", "Tm2", "Tm9",
                 "T4a", "T4b", "T4c", "T4d", "T5a", "T5b", "T5c", "T5d"]
 
@@ -189,14 +190,22 @@ def main():
                                 np.searchsorted(all_idx, pr))),
                           shape=(len(all_idx), len(all_idx))).tocsr()
 
-        # диффузия координат сетчатки вверх по пути
+        # диффузия координат сетчатки вверх по пути.
+        # Снимки на разном числе итераций делаются за один проход: каждая
+        # итерация — это взвешенное усреднение, то есть сглаживание, и оно
+        # схлопывает карту к одномерной тем сильнее, чем дольше крутить.
+        # Измерено: при 12 итерациях вторая доля дисперсии карты падает до
+        # 0.111, тогда как у листа координат сомы она 0.252. Поэтому число
+        # итераций — не деталь реализации, а параметр, который надо выбирать
+        # замером.
         D = np.zeros((len(all_idx), 2))
         fixed = np.zeros(len(all_idx), bool)
         loc_seed = np.searchsorted(all_idx, seed_idx)
         D[loc_seed] = d
         fixed[loc_seed] = True
         has = fixed.copy()
-        for _ in range(N_ITER):
+        snaps = {}
+        for it in range(1, N_ITER + 1):
             num = A @ (D * has[:, None])
             den = np.asarray(A @ has.astype(float)).ravel()
             ok = den > 0
@@ -205,7 +214,9 @@ def main():
             new[fixed] = D[fixed]
             D = new
             has = has | ok
-        return all_idx, pos_of, D, has, fixed, len(pr), c, r, resid, axes, nrm
+            if it in SNAP_ITERS:
+                snaps[it] = (D.copy(), has.copy())
+        return all_idx, pos_of, D, has, fixed, len(pr), c, r, resid, axes, nrm, snaps
 
     rng = np.random.default_rng(4242)
     results = {}
@@ -213,7 +224,7 @@ def main():
         print("\n" + "-" * 78)
         print(f" глаз: {side}")
         print("-" * 78)
-        all_idx, pos_of, D, has, fixed, n_edge, c, r, resid, axes, nrm = run_side(side)
+        all_idx, pos_of, D, has, fixed, n_edge, c, r, resid, axes, nrm, snaps = run_side(side)
         print(f"  фоторецепторов-семян: {int(fixed.sum())}; нейронов в подграфе: "
               f"{len(all_idx)}; рёбер: {n_edge}")
         print(f"  сфера глаза: радиус {r / 1000:.1f} мкм, невязка медиана "
@@ -224,6 +235,32 @@ def main():
               f"{axes[1] @ np.array([0, -1, 0]):+.2f})")
         print(f"  получили позицию: {int(has.sum())} из {len(all_idx)} "
               f"({has.mean():.1%})")
+
+        # ---------- сколько итераций сглаживания брать ----------
+        print(f"\n  {'итераций':>9s} {'с позицией':>11s} {'2-я доля карты':>16s} "
+              f"{'кан.корр 1':>11s} {'2':>7s}   (по T4c и Mi1)")
+        probe_types = [t for t in ("Mi1", "T4c") if ((ct == t) & (ann["side"] == side)).sum() > 50]
+        for it in sorted(snaps):
+            Dm, hm = snaps[it]
+            v2s, c1s, c2s, fr = [], [], [], []
+            for t in probe_types:
+                sub = ann[(ct == t) & (ann["side"] == side)]
+                sub = sub[sub[["pos_x", "pos_y", "pos_z"]].notna().all(axis=1)]
+                loc = np.array([pos_of[i] for i in sub["idx"] if i in pos_of])
+                g = hm[loc]
+                if g.sum() < 50:
+                    continue
+                mm = Dm[loc][g]
+                s = np.linalg.svd(mm - mm.mean(0), compute_uv=False) ** 2
+                v2s.append(float(s[1] / s.sum()))
+                xy = sheet_coords(sub[["pos_x", "pos_y", "pos_z"]].to_numpy(float) * VOXEL_NM)[g]
+                a1, a2 = canon_corr(mm, xy)
+                c1s.append(a1)
+                c2s.append(a2)
+                fr.append(float(g.mean()))
+            if v2s:
+                print(f"  {it:>9d} {np.mean(fr):>10.0%} {np.mean(v2s):>16.3f} "
+                      f"{np.mean(c1s):>11.3f} {np.mean(c2s):>7.3f}")
 
         az, el = D[:, 0], D[:, 1]
         _, _, Ds, hs, *_ = run_side(side, shuffled=True, rng=rng)
