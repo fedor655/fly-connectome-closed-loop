@@ -51,6 +51,7 @@ from benchmark import path_comp, path_con, path_wt  # noqa: E402
 import run_pytorch as rp  # noqa: E402
 
 from flyreplay import FAR_AWAY, PillarWorld, Recorder  # noqa: E402
+from tools.visual_field_map import N_STRIPS, load_or_build  # noqa: E402
 from flygym.simulation import Simulation  # noqa: E402
 from flygym.utils.math import Rotation3D  # noqa: E402
 from flygym_demo.complex_terrain import (  # noqa: E402
@@ -232,7 +233,7 @@ def strip_intensity(raw, om_strip, n_strips):
 def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
               cycles=100, autocal=15, cal_brain_ms=3000.0, seed=0,
               tau_eye=TAU_EYE_MS, tau_cmd=TAU_CMD_MS,
-              lc_base=None, lc_span=None,
+              lc_base=None, lc_span=None, spatial=False,
               video_path=None, traj_path=None, traj_every=10, verbose=True):
     """Один прогон. Возвращает (DataFrame лога, словарь сводки)."""
     px = FAR_AWAY if no_pillar else pillar_x
@@ -241,6 +242,38 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
     n = assets["n"]
     read_l, read_r = assets["read_l"], assets["read_r"]
     lc_l, lc_r = assets["lc_l"], assets["lc_r"]
+
+    # Скалярный режим — одна полоса на глаз. Один и тот же код обслуживает оба
+    # режима, поэтому контроль «скалярный вход на тех же сценах» не может
+    # разойтись с основным по реализации (поправка В: число полос берётся из
+    # карты, а не из максимума индекса).
+    #
+    # Поправка Б: в ОБОИХ режимах группы — это пересечение множества карты с
+    # `lc_l`/`lc_r`, а не всё множество карты. Карта покрывает 3973 из 4008
+    # левых проекционных и 4007 из 4030 правых (не хватает выхода оцеллярного
+    # глаза и нейронов без синапсов от медуллы); если бы пространственный
+    # режим стимулировал только покрытых картой, а скалярный — вообще всех,
+    # то режимы отличались бы не только пространственностью, но и составом
+    # нейронов, а скалярный режим — это ОБЯЗАТЕЛЬНЫЙ КОНТРОЛЬ ценности карты,
+    # и такое расхождение состава его портит. Пересечение с `lc_l`/`lc_r`
+    # нужно ещё и потому, что при `--stim lc9` этот набор — только LC9, и
+    # карта не должна расширять стимуляцию за его пределы.
+    # Названа vfm, а не m: в основном цикле ниже уже есть матрица поворота
+    # тела (sim.mj_data.xmat) — короткое имя `m` для неё напрашивалось бы и
+    # столкнулось с картой.
+    vfm = load_or_build()
+    if spatial:
+        n_strips = N_STRIPS
+        om_strip = vfm["ommatidia"]
+        grp_l = [vfm["left_idx"][(vfm["left_strip"] == s) & np.isin(vfm["left_idx"], lc_l)]
+                 for s in range(n_strips)]
+        grp_r = [vfm["right_idx"][(vfm["right_strip"] == s) & np.isin(vfm["right_idx"], lc_r)]
+                 for s in range(n_strips)]
+    else:
+        n_strips = 1
+        om_strip = np.zeros((2, 721), dtype=int)
+        grp_l = [vfm["left_idx"][np.isin(vfm["left_idx"], lc_l)]]
+        grp_r = [vfm["right_idx"][np.isin(vfm["right_idx"], lc_r)]]
 
     # Широкий вход (все зрительные проекционные, около 4000 нейронов) требует
     # вчетверо меньших частот, чем узкий по LC9 (87 нейронов), иначе сеть
@@ -306,10 +339,12 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
                 sim.render_as_needed()
 
     def step_brain(rate_l, rate_r):
+        """rate_l, rate_r — массивы длины n_strips: своя частота на свою полосу."""
         nonlocal cond, delay_buf, spikes, v, refrac
         rates.zero_()
-        rates[:, lc_l] = rate_l
-        rates[:, lc_r] = rate_r
+        for s in range(n_strips):
+            rates[:, grp_l[s]] = float(rate_l[s])
+            rates[:, grp_r[s]] = float(rate_r[s])
         dn_acc.zero_()
         for _ in range(inner_brain):
             cond, delay_buf, spikes, v, refrac = model(
@@ -333,14 +368,16 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
     with torch.no_grad():
         for _ in range(autocal):
             step_body(np.array([0.85, 0.85]))
-            base_int.append(sim.get_ommatidia_readouts(fly.name).sum(axis=2).mean(axis=1))
-    baseline = np.array(base_int).mean(axis=0)
+            base_int.append(strip_intensity(
+                sim.get_ommatidia_readouts(fly.name).sum(axis=2), om_strip, n_strips))
+    baseline = np.array(base_int).mean(axis=0)          # (2, n_strips)
 
     n_cal = int(cal_brain_ms / SYNC_MS)
     sp_l = sp_r = 0.0
     with torch.no_grad():
+        flat = np.full(n_strips, lc_base)
         for w in range(n_cal):
-            a, b = step_brain(lc_base, lc_base)
+            a, b = step_brain(flat, flat)
             if w >= n_cal // 4:                # четверть на переходный процесс
                 sp_l += a * (SYNC_MS / 1000.0)
                 sp_r += b * (SYNC_MS / 1000.0)
@@ -348,7 +385,9 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
     ref_l = max(sp_l / t_cal, 1.0) / TARGET_CMD_AT_BASE
     ref_r = max(sp_r / t_cal, 1.0) / TARGET_CMD_AT_BASE
     if verbose:
-        print(f"  [калибровка] яркость {baseline[0]:.4f}/{baseline[1]:.4f}, "
+        # baseline теперь (2, n_strips): в печать идёт среднее по полосам —
+        # тот же смысл, что раньше было одно число на глаз.
+        print(f"  [калибровка] яркость {baseline[0].mean():.4f}/{baseline[1].mean():.4f}, "
               f"спайков {sp_l:.0f}/{sp_r:.0f}, норма {ref_l:.1f}/{ref_r:.1f}")
 
     # --- Основной цикл ---
@@ -358,16 +397,17 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
     t0 = time.perf_counter()
     with torch.no_grad():
         for cycle in range(cycles):
-            inten_raw = sim.get_ommatidia_readouts(fly.name).sum(axis=2).mean(axis=1)
+            inten_raw = strip_intensity(
+                sim.get_ommatidia_readouts(fly.name).sum(axis=2), om_strip, n_strips)
             if eye_filt is None:
                 eye_filt = inten_raw.copy()
             else:
                 eye_filt += alpha_eye * (inten_raw - eye_filt)
             rel = (baseline - eye_filt) / np.maximum(baseline, 1e-6)
-            dark = np.clip(rel * DARK_GAIN, 0.0, 1.0)
+            dark = np.clip(rel * DARK_GAIN, 0.0, 1.0)          # (2, n_strips)
 
-            rate_l = lc_base + lc_span * float(dark[0])
-            rate_r = lc_base + lc_span * float(dark[1])
+            rate_l = lc_base + lc_span * dark[0]                # (n_strips,)
+            rate_r = lc_base + lc_span * dark[1]
             hz_l, hz_r = step_brain(rate_l, rate_r)
 
             if ema_l is None:
@@ -381,18 +421,32 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
             step_body(np.array([cmd_l, cmd_r]))
 
             pos = sim.get_body_positions(fly.name)[thorax_idx]
-            m = sim.mj_data.xmat[thorax_body_id].reshape(3, 3)
-            heading = float(np.degrees(np.arctan2(m[1, 0], m[0, 0])))
+            rot = sim.mj_data.xmat[thorax_body_id].reshape(3, 3)
+            heading = float(np.degrees(np.arctan2(rot[1, 0], rot[0, 0])))
             dist = float(np.hypot(px - pos[0], py - pos[1]))
 
-            rows.append([cycle, cycle * SYNC_MS / 1000.0,
-                         float(eye_filt[0]), float(eye_filt[1]),
-                         float(dark[0]), float(dark[1]), rate_l, rate_r,
-                         hz_l, hz_r, cmd_l, cmd_r,
-                         float(pos[0]), float(pos[1]), heading, dist])
+            # Сводные колонки (среднее по полосам) остаются на прежних местах:
+            # tools/replicate_vision.py и tools/analyze_replication.py читают
+            # именно их, и переписывать разбор ради нового режима незачем.
+            row = [cycle, cycle * SYNC_MS / 1000.0,
+                   float(eye_filt[0].mean()), float(eye_filt[1].mean()),
+                   float(dark[0].mean()), float(dark[1].mean()),
+                   float(rate_l.mean()), float(rate_r.mean()),
+                   hz_l, hz_r, cmd_l, cmd_r,
+                   float(pos[0]), float(pos[1]), heading, dist]
+            if n_strips > 1:
+                row += [float(x) for x in dark[0]] + [float(x) for x in dark[1]]
+                row += [float(x) for x in rate_l] + [float(x) for x in rate_r]
+            rows.append(row)
 
     elapsed = time.perf_counter() - t0
-    df = pd.DataFrame(rows, columns=LOG_COLUMNS)
+    cols = list(LOG_COLUMNS)
+    if n_strips > 1:
+        cols += [f"dark_l{s}" for s in range(n_strips)]
+        cols += [f"dark_r{s}" for s in range(n_strips)]
+        cols += [f"rate_l{s}" for s in range(n_strips)]
+        cols += [f"rate_r{s}" for s in range(n_strips)]
+    df = pd.DataFrame(rows, columns=cols)
 
     if video_path:
         sim.renderer.save_video(video_path)
@@ -419,6 +473,7 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
     summary = {
         "seed": seed, "no_pillar": bool(no_pillar), "pillar_y": None if no_pillar else pillar_y,
         "readout": assets.get("readout", "?"), "stim": assets.get("stim", "?"),
+        "spatial": bool(spatial), "n_strips": n_strips,
         "n_read_left": len(read_l), "n_read_right": len(read_r),
         "turn_deg": turn, "path_mm": float(np.hypot(dx, dy)),
         "dx_mm": float(dx), "dy_mm": float(dy),
@@ -466,6 +521,9 @@ def main():
                          "или только в LC9")
     ap.add_argument("--lc-base", type=float, default=None)
     ap.add_argument("--lc-span", type=float, default=None)
+    ap.add_argument("--spatial", action="store_true",
+                    help="подавать яркость по полосам поля зрения, а не одним "
+                         "числом на глаз")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -474,7 +532,8 @@ def main():
     print("=" * 78)
     print(f"device={device}, циклов={args.cycles}, seed={args.seed}, "
           f"столб {'убран' if args.no_pillar else f'y={args.pillar_y:+.1f}'}")
-    print(f"вход «{args.stim}», считывание «{args.readout}»")
+    print(f"вход «{args.stim}», считывание «{args.readout}», "
+          f"подача {'пространственная' if args.spatial else 'скалярная'}")
 
     assets = load_brain_assets(device, readout=args.readout, stim=args.stim)
     video_path = out(f"closed_loop_vision_{args.tag}.mp4") if args.video else None
@@ -485,6 +544,7 @@ def main():
                       cal_brain_ms=args.cal_brain_ms, seed=args.seed,
                       tau_eye=args.tau_eye, tau_cmd=args.tau_cmd,
                       lc_base=args.lc_base, lc_span=args.lc_span,
+                      spatial=args.spatial,
                       video_path=video_path, traj_path=traj_path,
                       traj_every=args.record_every)
 
