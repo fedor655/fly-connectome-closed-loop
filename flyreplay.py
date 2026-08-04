@@ -31,14 +31,20 @@ FAR_AWAY = 500.0          # куда убирать столб в контрол
 
 
 class PillarWorld(FlatGroundWorld):
-    """Плоский грунт и один тёмный столб."""
+    """Плоский грунт и один тёмный столб.
 
-    def __init__(self, x: float, y: float) -> None:
+    z и h нужны сценам этапа 2 запасного варианта: объект вверху против объекта
+    внизу проверяет ось элевации. По умолчанию столб стоит на грунте во всю
+    высоту — ровно как раньше, поэтому вызов PillarWorld(x, y) не меняется.
+    """
+
+    def __init__(self, x: float, y: float,
+                 z: float | None = None, h: float = PILLAR_H) -> None:
         super().__init__(name="pillar_world", half_size=300)
         self.mjcf_root.worldbody.add_geom(
             type=GEOM_TYPES["cylinder"], name="pillar",
-            size=[PILLAR_R, PILLAR_H / 2, 0.0],
-            pos=[x, y, PILLAR_H / 2],
+            size=[PILLAR_R, h / 2, 0.0],
+            pos=[x, y, h / 2 if z is None else z],
             rgba=[0.05, 0.05, 0.05, 1.0],
             contype=0, conaffinity=0,
         )

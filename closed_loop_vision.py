@@ -234,6 +234,7 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
               cycles=100, autocal=15, cal_brain_ms=3000.0, seed=0,
               tau_eye=TAU_EYE_MS, tau_cmd=TAU_CMD_MS,
               lc_base=None, lc_span=None, spatial=False,
+              pillar_z=None, pillar_h=None,
               video_path=None, traj_path=None, traj_every=10, verbose=True):
     """Один прогон. Возвращает (DataFrame лога, словарь сводки)."""
     px = FAR_AWAY if no_pillar else pillar_x
@@ -290,7 +291,8 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
     fly = make_locomotion_fly()
     fly.add_vision()
     cam = fly.add_tracking_camera(name="trackcam") if video_path else None
-    world = PillarWorld(px, py)
+    world = (PillarWorld(px, py) if pillar_z is None
+             else PillarWorld(px, py, z=pillar_z, h=pillar_h))
     world.add_fly(fly, spawn_position=[0.0, 0.0, 0.5],
                   spawn_rotation=Rotation3D("quat", [1, 0, 0, 0]),
                   add_ground_contact_sensors=True)
