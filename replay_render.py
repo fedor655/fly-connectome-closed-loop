@@ -49,6 +49,129 @@ def eyes_panel(retina, gray, mu, lo, hi):
     return np.repeat(np.hstack([cols[0], gap, cols[1]])[:, :, None], 3, axis=2)
 
 
+def strip_pixels(id_map, om_strip_eye, n_strips):
+    """Номер полосы для каждого пикселя картинки глаза и для каждой её колонки.
+
+    Полосы режутся по квантилям координаты омматидия, а сетка гексагональная,
+    поэтому у границы омматидии соседних полос перемежаются и чистой
+    вертикальной линии не выходит: диапазоны колонок перекрываются (у левого
+    глаза полоса 0 занимает 0-147, полоса 1 — 129-233). Поэтому граница
+    рисуется попиксельно, а подпись под мозаикой — по преобладающей в колонке
+    полосе. Так подпись стоит ровно под своим куском сетчатки.
+    """
+    # int64 обязателен: карта хранится в uint16, и 0 - 1 там уходит в 65535.
+    ids = id_map.astype(np.int64)
+    sp = np.where(ids > 0, om_strip_eye[np.clip(ids - 1, 0, None)], -1)
+    col = np.full(sp.shape[1], -1, int)
+    for c in range(sp.shape[1]):
+        v = sp[:, c]
+        v = v[v >= 0]
+        if v.size:
+            col[c] = np.bincount(v, minlength=n_strips).argmax()
+    return sp, col
+
+
+def strips_panel(retina, gray, om_strip, id_map, rates, hz_max, front_strip, draw=None):
+    """Мозаика с разметкой на полосы, а под ней — частота каждой полосы.
+
+    Это и есть то, что на самом деле уходит в мозг в режиме --spatial: не одно
+    число на глаз, а по числу на полосу, и каждая полоса стимулирует свою группу
+    примерно из тысячи зрительных проекционных нейронов.
+
+    Глаза ЗЕРКАЛЬНЫ по азимуту, и это здесь видно глазами: у левого глаза полоса
+    «перёд» лежит у правого края картинки (колонки 315-447), у правого — у левого
+    (0-132). Пока карта была одна на оба глаза, «перёд» попадал в полосу 3 слева и
+    в полосу 0 справа, и подача правого глаза шла перевёрнутой. Ошибка стоила бы
+    всего этапа 2, поэтому метка «перёд» вынесена в картинку.
+    """
+    n_strips = int(om_strip.max()) + 1
+    cols, centers = [], []
+    for k in (0, 1):
+        mosaic = retina.hex_pxls_to_human_readable(gray[k], color_8bit=True)
+        sp, colstrip = strip_pixels(id_map, om_strip[k], n_strips)
+        img = np.repeat(mosaic[:, :, None], 3, axis=2)
+        edge = np.zeros_like(sp, bool)
+        edge[:, 1:] = (sp[:, 1:] != sp[:, :-1]) & (sp[:, 1:] >= 0) & (sp[:, :-1] >= 0)
+        img[edge] = (255, 220, 0)                       # жёлтая граница полос
+        w = img.shape[1]
+        band = np.zeros((64, w, 3), np.uint8)
+        mark = np.zeros((30, w, 3), np.uint8)
+        for c, s in enumerate(colstrip):
+            if s < 0:
+                continue
+            v = int(np.clip(rates[k][s] / hz_max, 0.0, 1.0) * 255)
+            band[:, c] = (v, v, v)
+            if s == front_strip:
+                mark[:, c] = (0, 200, 255)              # где «перёд» на этой сетчатке
+        rule = np.full((3, w, 3), 255, np.uint8)
+        cols.append(np.vstack([img, rule, band, rule, mark]))
+        # Центр каждой полосы В ПИКСЕЛЯХ, а не по номеру: у правого глаза
+        # полосы идут зеркально, и подпись, поставленная по номеру, встаёт над
+        # чужим сегментом. Ровно та же зеркальность один раз уже перевернула
+        # подачу правого глаза, поэтому здесь она считается, а не угадывается.
+        off = k * (w + 6)
+        centers.append([off + float(np.where(colstrip == s)[0].mean())
+                        if (colstrip == s).any() else off + w / 2
+                        for s in range(n_strips)])
+    gap = np.full((cols[0].shape[0], 6, 3), 255, np.uint8)
+    panel = np.hstack([cols[0], gap, cols[1]])
+    if draw is not None:
+        panel = draw(panel, rates, hz_max, np.array(centers), front_strip)
+    return panel
+
+
+FONT_CANDIDATES = (
+    "/System/Library/Fonts/Supplemental/Arial.ttf",      # macOS
+    "/usr/share/fonts/noto/NotoSans-Regular.ttf",        # Arch, CachyOS
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",   # Debian, Ubuntu
+)
+
+
+def _font(size):
+    """TTF с кириллицей. Встроенный шрифт PIL её рисует квадратами."""
+    from PIL import ImageFont
+    for p in FONT_CANDIDATES:
+        if Path(p).exists():
+            return ImageFont.truetype(p, size)
+    return None
+
+
+def label_panel(panel, rates, hz_max, centers, front_strip):
+    """Подписи частот на полосах. Без PIL или без TTF возвращает картинку как есть."""
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        return panel
+    font, small = _font(26), _font(20)
+    if font is None:
+        return panel
+    im = Image.fromarray(panel)
+    d = ImageDraw.Draw(im)
+    n = rates.shape[1]
+    eye_w = (panel.shape[1] - 6) // 2
+    band_top = panel.shape[0] - 97                       # 64 полоса + 3 линия + 30 метка
+    for k in (0, 1):
+        x0 = k * (eye_w + 6)
+        for s in range(n):
+            txt = f"{rates[k][s]:.0f}"
+            x = centers[k][s]
+            w = d.textlength(txt, font=font)
+            # частота пишется поверх своей полосы; цвет по яркости фона, иначе
+            # на светлой полосе красное по белому не читается
+            fill = (200, 0, 0) if rates[k][s] / hz_max > 0.55 else (255, 120, 120)
+            d.text((x - w / 2, band_top + 16), txt, fill=fill, font=font)
+        d.text((x0 + 8, band_top - 34),
+               ("левый глаз" if k == 0 else "правый глаз") + "   Гц на полосу",
+               fill=(120, 255, 120), font=small)
+        # подпись к голубой метке «перёд» — она у разных глаз с разных сторон
+        xf = centers[k][front_strip]
+        w = d.textlength("перёд", font=small)
+        # чёрным: текст ложится ПОВЕРХ голубой метки, и голубым по голубому
+        # его не видно вовсе
+        d.text((xf - w / 2, panel.shape[0] - 27), "перёд", fill=(0, 0, 0), font=small)
+    return np.asarray(im)
+
+
 def resolve_camera(m, name):
     """Имя камеры с точностью до префикса пространства имён ('nmf/')."""
     names = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_CAMERA, i) for i in range(m.ncam)]
@@ -69,6 +192,10 @@ def main():
     ap.add_argument("--mean", action="store_true",
                     help="с --cam eyes: под каждым глазом то, что от него "
                          "остаётся мозгу — одно усреднённое число вместо 721")
+    ap.add_argument("--strips", action="store_true",
+                    help="с --cam eyes: разметить сетчатку на полосы поля зрения "
+                         "и показать частоту, которую каждая полоса гонит в свою "
+                         "группу зрительных проекционных нейронов (режим --spatial)")
     ap.add_argument("--res", type=int, nargs=2, default=(640, 480), metavar=("W", "H"))
     ap.add_argument("--fps", type=float, default=None,
                     help="кадров в секунду в mp4 (с --flight берётся из json)")
@@ -84,7 +211,8 @@ def main():
     frame_dt = float(z["timestep"]) * int(z["every"])
     hi = n if args.hi is None else min(args.hi, n)
 
-    sim = build_scene(z["pillar"], z["geom_pos"])
+    sim = build_scene(z["pillar"], z["geom_pos"],
+                      light=float(z["light"]) if "light" in z else 1.0)
     m, d = sim.mj_model, sim.mj_data
     if qpos.shape[1] != m.nq:
         sys.exit(f"запись не подходит к сцене: nq {qpos.shape[1]} против {m.nq}")
@@ -118,6 +246,48 @@ def main():
     renderer = None if eyes else mujoco.Renderer(m, height=h, width=w)
     size = "512×904" if eyes else f"{w}×{h}"
     print(f"{what} -> {out_path} ({len(steps)} кадров {size} @ {fps:g} fps)")
+
+    if eyes and args.strips:
+        # Импорты ленивые: без --strips просмотрщик не должен тянуть torch.
+        from tools.visual_field_map import OMMATIDIA_MAP, load_or_build
+        from closed_loop_vision import LIGHT_HZ, SHADE_HZ, strip_intensity
+
+        vfm = load_or_build()
+        om = vfm["ommatidia"]                       # (2, 721), строка на глаз
+        id_map = np.load(OMMATIDIA_MAP)
+        n_strips = int(om.max()) + 1
+        FRONT = n_strips - 1                        # проверено ассертом в карте
+        for k, side in ((0, "левый"), (1, "правый")):
+            sp, col = strip_pixels(id_map, om[k], n_strips)
+            rng = [f"{s}:{np.where(col == s)[0].min()}-{np.where(col == s)[0].max()}"
+                   for s in range(n_strips) if (col == s).any()]
+            print(f"{side} глаз, колонки полос: {' '.join(rng)}  «перёд» = полоса {FRONT}")
+
+        raw = []
+        for i, _ in steps:
+            d.qpos[:] = qpos[min(max(i, 0), n - 1)]
+            mujoco.mj_forward(m, d)
+            raw.append(sim.get_ommatidia_readouts(fly_name).sum(axis=2))
+        # Частоты считаются той же формулой, что в контуре (--drive light), но
+        # БЕЗ фильтра tau=100 мс: здесь мгновенные значения кадра, а мозг видит
+        # сглаженные. Разметка полос от этого не меняется, частоты дрожат сильнее.
+        rates = []
+        for g in raw:
+            inten = strip_intensity(g, om, n_strips)
+            B = float(inten.mean())
+            rates.append(LIGHT_HZ * B + SHADE_HZ * np.clip(B - inten, 0.0, None))
+        rates = np.array(rates)
+        hz_max = float(rates.max())
+        print(f"частоты на входе: {rates.min():.1f}..{hz_max:.1f} Гц; "
+              f"освещённость B по записи "
+              f"{min(float(strip_intensity(g, om, n_strips).mean()) for g in raw):.3f}.."
+              f"{max(float(strip_intensity(g, om, n_strips).mean()) for g in raw):.3f}")
+        with imageio.get_writer(out_path, fps=fps, macro_block_size=1) as writer:
+            for g, r in zip(raw, rates):
+                writer.append_data(strips_panel(sim.retina, g, om, id_map, r,
+                                                hz_max, FRONT, draw=label_panel))
+        print(f"готово: {out_path}")
+        return
 
     if eyes and args.mean:
         # Первым проходом собираем сами показания: диапазон усреднённой яркости

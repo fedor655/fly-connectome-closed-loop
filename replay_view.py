@@ -74,7 +74,8 @@ def main():
     flight_path = args.flight or str(Path(args.npz).with_name(
         Path(args.npz).stem.replace("_traj", "") + "_flight.json"))
 
-    sim = build_scene(z["pillar"], z["geom_pos"])
+    sim = build_scene(z["pillar"], z["geom_pos"],
+                      light=float(z["light"]) if "light" in z else 1.0)
     m, d = sim.mj_model, sim.mj_data
     if qpos.shape[1] != m.nq:
         sys.exit(f"запись не подходит к сцене: nq {qpos.shape[1]} против {m.nq}")

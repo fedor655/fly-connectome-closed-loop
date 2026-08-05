@@ -496,7 +496,7 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
     if video_path:
         sim.renderer.save_video(video_path)
     if rec:
-        rec.save(traj_path, (px, py))
+        rec.save(traj_path, (px, py), light=light)
     sim.close()
 
     turn = df["heading_deg"].iloc[-1] - df["heading_deg"].iloc[0]

@@ -95,7 +95,8 @@ class Recorder:
             self.t.append(float(self.sim.mj_data.time))
         self._i += 1
 
-    def save(self, path: str, pillar_xy: tuple[float, float]) -> str:
+    def save(self, path: str, pillar_xy: tuple[float, float],
+             light: float = 1.0) -> str:
         np.savez(
             path,
             qpos=np.asarray(self.qpos),
@@ -106,6 +107,11 @@ class Recorder:
             pillar=np.asarray(pillar_xy, dtype=float),
             timestep=float(self.sim.timestep),
             every=self.every,
+            # Освещённость сцены НЕ выводится из qpos и не лежит в geom_pos:
+            # это параметры процедурных текстур, заданные до компиляции. Без
+            # неё воспроизведение тёмного прогона рисовало бы светлую картинку,
+            # то есть то, что муха увидела бы, если бы свет был.
+            light=float(light),
         )
         return path
 
@@ -155,12 +161,17 @@ def apply_flight(cam, e: dict) -> None:
     cam.elevation = e["elevation"]
 
 
-def build_scene(pillar_xy, geom_pos=None) -> Simulation:
-    """Пересобрать ту же сцену без мозга. Около 0.07 с."""
+def build_scene(pillar_xy, geom_pos=None, light=1.0) -> Simulation:
+    """Пересобрать ту же сцену без мозга. Около 0.07 с.
+
+    light берётся из записи (ключ light в npz); у записей, сделанных до его
+    появления, ключа нет, и вызывающий подставляет 1.0 — прежнее поведение.
+    """
     fly = make_locomotion_fly()
     fly.add_vision()
     fly.add_tracking_camera(name="trackcam")
-    world = PillarWorld(float(pillar_xy[0]), float(pillar_xy[1]))
+    world = PillarWorld(float(pillar_xy[0]), float(pillar_xy[1]),
+                        light=float(light))
     world.add_fly(fly, spawn_position=[0.0, 0.0, 0.5],
                   spawn_rotation=Rotation3D("quat", [1, 0, 0, 0]),
                   add_ground_contact_sensors=True)
