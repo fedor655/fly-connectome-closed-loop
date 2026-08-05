@@ -70,6 +70,16 @@ WARM_STEPS = 40
 BATCH = 4
 DARK = [0.05, 0.05, 0.05, 1.0]
 
+# Пары сцен и что каждая проверяет. Помета «команда» означает, что эта пара
+# ОБЯЗАНА менять команду поворота, а «форма» — что не обязана, там проверяется
+# только пространственное разрешение.
+PAIRS = [
+    ("два тонких", "один толстый", "форма: толстый против двух тонких"),
+    ("выше горизонта", "ниже горизонта", "высота: выше против ниже"),
+    ("слева 27°", "справа 27°", "команда: лево против право"),
+    ("впереди", "слева 27°", "команда: перед против сбоку"),
+]
+
 
 class ObjectWorld(FlatGroundWorld):
     """Плоский грунт и произвольный набор тёмных тел."""
@@ -168,9 +178,20 @@ def main():
           f"среднее {e_dn.mean():.4f}")
     print(f"  расхождение по яркости {abs(e_up.mean() - e_dn.mean()) / e_up.mean():.1%}")
 
+    # Сцены двух родов, и это существенно. Симметричные (толстый против двух
+    # тонких, выше против ниже) проверяют пространственное разрешение, но
+    # команду поворота менять не обязаны и не должны: муха не сворачивает
+    # иначе от одного толстого столба, чем от двух тонких. Несимметричные
+    # (слева, справа, впереди) обязаны менять именно команду. Первый заход имел
+    # только симметричные, и потому вопрос «доходит ли детализация до
+    # нисходящих» был задан горлышку не по адресу.
     e_ctl = eyes([cyl(0.0, 500.0)])
-    scenes = {"пусто": e_ctl, "два тонких": e_two, "один толстый": e_one,
-              "выше горизонта": e_up, "ниже горизонта": e_dn}
+    scenes = {"пусто": e_ctl,
+              "два тонких": e_two, "один толстый": e_one,
+              "выше горизонта": e_up, "ниже горизонта": e_dn,
+              "слева 27°": eyes([cyl(5.0, 2.5)]),
+              "справа 27°": eyes([cyl(5.0, -2.5)]),
+              "впереди": eyes([cyl(5.0, 0.0)])}
 
     # ---------- 2. flyvis на все сцены разом, потом освободить ----------
     print("\n----- считаю оптические доли для всех сцен -----")
@@ -239,13 +260,22 @@ def main():
     fw_idx = np.array([flyid2i[int(r)] for r in asg["root_id"]])
     vp = ann["super_class"] == "visual_projection"
     lc = np.array([flyid2i[int(x)] for x in ann.loc[vp, "root_id"]])
-    print(f"\nстык {len(fw_idx)} нейронов, зрительных проекционных {len(lc)}")
+    # Нисходящие — не ступень обработки, а горлышко: весь выход мозга в тело.
+    # Мерить надо и там: информация, существующая на лобуле, ещё не значит, что
+    # она проходит горлышко. Намёк на то, что размывает, уже есть — при
+    # стимуляции стыка латеральность на лобуле 274-кратная, а на нисходящих
+    # 1.66-кратная.
+    dn_m = (ann["super_class"] == "descending") & ann["side"].isin(["left", "right"])
+    dn = np.array([flyid2i[int(x)] for x in ann.loc[dn_m, "root_id"]])
+    print(f"\nстык {len(fw_idx)} нейронов, зрительных проекционных {len(lc)}, "
+          f"нисходящих {len(dn)}")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("загружаю веса FlyWire...")
     weights = rp.get_weights(str(path_con), str(path_comp), str(path_wt),
                              csr=True).to(device)
     idx_lc = torch.tensor(lc, dtype=torch.long, device=device)
+    idx_dn = torch.tensor(dn, dtype=torch.long, device=device)
     idx_fw = torch.tensor(fw_idx, dtype=torch.long, device=device)
 
     def brain(rate_vec):
@@ -272,25 +302,52 @@ def main():
         g = torch.Generator(device=device)
         g.manual_seed(4242)
         acc = torch.zeros(BATCH, len(lc), device=device)
+        acc_dn = torch.zeros(BATCH, len(dn), device=device)
         n_tr, n_me = int(TRANSIENT_MS / DT_BRAIN_MS), int(BRAIN_MS / DT_BRAIN_MS)
         with torch.no_grad():
             for step in range(n_tr + n_me):
                 c, d, s, v, r = model(rates, c, d, s, v, r, generator=g)
                 if step >= n_tr:
                     acc.add_(s[:, idx_lc])
-        a = acc.cpu().numpy() / (BRAIN_MS / 1000.0)
+                    acc_dn.add_(s[:, idx_dn])
+        t = BRAIN_MS / 1000.0
+        a, b = acc.cpu().numpy() / t, acc_dn.cpu().numpy() / t
         half = BATCH // 2
-        return a[:half].mean(0), a[half:].mean(0)
+        return ((a[:half].mean(0), a[half:].mean(0)),
+                (b[:half].mean(0), b[half:].mean(0)))
 
-    res = {}
+    def brain_retry(rate_vec, tries=3):
+        """Видеокарта в этой машине проброшена в WSL и делится с рабочим столом
+        Windows. Дважды за сессию она срывалась в CUDA error: unknown error,
+        причём один раз при 1059 МБ занятых из 8192 — то есть это не нехватка
+        памяти, а срыв драйвера. Повтор дешевле, чем терять сорокаминутный
+        прогон целиком."""
+        for attempt in range(tries):
+            try:
+                return brain(rate_vec)
+            except Exception as e:
+                if attempt == tries - 1:
+                    raise
+                print(f"    сбой видеокарты ({type(e).__name__}), "
+                      f"попытка {attempt + 2} из {tries}")
+                try:
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                except Exception:
+                    pass
+                time.sleep(5)
+
+    res, res_dn = {}, {}
     for scheme, table in (("гибрид", hz), ("старая схема", hz_flat)):
         print(f"\n----- {scheme} -----")
         for k in scenes:
             t0 = time.perf_counter()
-            a, b = brain(table[k])
+            (a, b), (p, q) = brain_retry(table[k])
             res[(scheme, k)] = (a, b)
+            res_dn[(scheme, k)] = (p, q)
             print(f"  {k:<16s} вход {table[k].mean():>6.1f} Гц; "
-                  f"LC средняя {((a + b) / 2).mean():>6.2f} Гц "
+                  f"LC {((a + b) / 2).mean():>5.2f} Гц; "
+                  f"нисходящие {((p + q) / 2).mean():>5.2f} Гц "
                   f"[{time.perf_counter() - t0:.0f} с]")
 
     # ---------- 4. разбор ----------
@@ -298,32 +355,93 @@ def main():
     print(" РЕЗУЛЬТАТ")
     print("=" * 78)
     rows = []
-    for scheme in ("гибрид", "старая схема"):
-        names = list(scenes)
-        # Каждая половина пачки обрабатывается отдельно, со своим общим средним:
-        # так две оценки одной сцены остаются независимыми и потолок не уезжает
-        # в минус из-за общего вычитаемого.
-        dev = {}
-        for h in (0, 1):
-            com = np.mean([res[(scheme, k)][h] for k in names], axis=0)
+    names = list(scenes)
+    for where, table in (("лобула, 8038 нейронов", res),
+                         ("нисходящие, 1291 нейрон", res_dn)):
+        print("\n" + "-" * 78)
+        print(f" считывание: {where}")
+        print("-" * 78)
+        for scheme in ("гибрид", "старая схема"):
+            # Каждая половина пачки обрабатывается отдельно, со своим общим
+            # средним: так две оценки одной сцены остаются независимыми и
+            # потолок не уезжает в минус из-за общего вычитаемого.
+            dev = {}
+            for h in (0, 1):
+                com = np.mean([table[(scheme, k)][h] for k in names], axis=0)
+                for k in names:
+                    dev[(k, h)] = table[(scheme, k)][h] - com
+            rh = float(np.mean([cca_corr(dev[(k, 0)], dev[(k, 1)]) for k in names]))
+            ceil = 2 * rh / (1 + rh) if rh > 0 else rh
+            print(f"\n  {scheme}: надёжность половины {rh:.3f}, "
+                  f"потолок целой {ceil:.3f}")
+            if ceil <= 0.05:
+                print("    ПОТОЛОК ОКОЛО НУЛЯ: сцены неразличимы даже сами с")
+                print("    собой, мерить нечем. Всё ниже — не результат, а шум.")
+            for a, b, lab in PAIRS:
+                c = 0.5 * (cca_corr(dev[(a, 0)], dev[(b, 1)]) +
+                           cca_corr(dev[(a, 1)], dev[(b, 0)]))
+                rel = c / ceil if ceil > 0.05 else float("nan")
+                print(f"    {lab:<28s} корреляция {c:>7.3f}   доля потолка "
+                      f"{rel:>6.2f}")
+                rows.append({"readout": where, "scheme": scheme, "test": lab,
+                             "corr": c, "ceiling": ceil, "corr_corrected": rel})
+
+    # ---------- команда: то, что на самом деле течёт через горлышко ----------
+    # По-нейронная картина на нисходящих не воспроизводится (потолок около
+    # нуля): у одного нисходящего за окно около девяти спайков, и узор тонет в
+    # шуме счёта. Но в тело идёт не узор, а разность средних частот левой и
+    # правой популяций, и среднее по сотне нейронов устойчиво совсем иначе.
+    # Это и есть величина, которую надо мерить на горлышке.
+    cache = Path(out("dn_population_seam_cache.npz"))
+    if cache.exists():
+        z = np.load(cache)
+        pos = {v: i for i, v in enumerate(dn)}
+        sel_l = np.array([pos[i] for i in z["left"] if i in pos])
+        sel_r = np.array([pos[i] for i in z["right"] if i in pos])
+        print("\n" + "=" * 78)
+        print(f" КОМАНДА В ТЕЛО: {len(sel_l)} нисходящих слева, {len(sel_r)} справа")
+        print("=" * 78)
+        print(f"  {'сцена':<16s} {'схема':<14s} {'левая, Гц':>10s} "
+              f"{'правая, Гц':>11s} {'разность':>10s} {'шум разности':>13s}")
+        cmd_rows = []
+        for scheme in ("гибрид", "старая схема"):
             for k in names:
-                dev[(k, h)] = res[(scheme, k)][h] - com
-        rh = float(np.mean([cca_corr(dev[(k, 0)], dev[(k, 1)]) for k in names]))
-        # надёжность половины пачки -> надёжность целой, поправка Спирмена-Брауна
-        ceil = 2 * rh / (1 + rh) if rh > 0 else rh
-        print(f"\n  {scheme}: надёжность половины {rh:.3f}, потолок целой {ceil:.3f}")
-        if ceil <= 0.05:
-            print("    ПОТОЛОК ОКОЛО НУЛЯ: сцены неразличимы даже сами с собой,")
-            print("    мерить нечем. Всё ниже — не результат, а шум.")
-        for a, b, lab in (("два тонких", "один толстый", "толстый против двух тонких"),
-                          ("выше горизонта", "ниже горизонта", "выше против ниже")):
-            c = 0.5 * (cca_corr(dev[(a, 0)], dev[(b, 1)]) +
-                       cca_corr(dev[(a, 1)], dev[(b, 0)]))
-            rel = c / ceil if ceil > 0.05 else float("nan")
-            print(f"    {lab:<28s} корреляция {c:>7.3f}   доля потолка "
-                  f"{rel:>6.2f}")
-            rows.append({"scheme": scheme, "test": lab, "corr": c,
-                         "ceiling": ceil, "corr_corrected": rel})
+                h0, h1 = res_dn[(scheme, k)]
+                l0, r0 = h0[sel_l].mean(), h0[sel_r].mean()
+                l1, r1 = h1[sel_l].mean(), h1[sel_r].mean()
+                dl, d1 = l0 - r0, l1 - r1
+                print(f"  {k:<16s} {scheme:<14s} {(l0 + l1) / 2:>10.2f} "
+                      f"{(r0 + r1) / 2:>11.2f} {(dl + d1) / 2:>10.2f} "
+                      f"{abs(dl - d1) / 2:>13.2f}")
+                cmd_rows.append({"scene": k, "scheme": scheme,
+                                 "left_hz": float((l0 + l1) / 2),
+                                 "right_hz": float((r0 + r1) / 2),
+                                 "diff_hz": float((dl + d1) / 2),
+                                 "diff_noise_hz": float(abs(dl - d1) / 2)})
+        cmd = pd.DataFrame(cmd_rows)
+        cmd.to_csv(out("hybrid_vision_command.csv"), index=False)
+        print("\n  Читать так: разность левой и правой популяций — это и есть")
+        print("  поворотная команда. Шум разности взят из двух половин пачки.")
+        print("  Сцена меняет команду, если разность отличается от контрольной")
+        print("  заметно сильнее шума.")
+        for scheme in ("гибрид", "старая схема"):
+            c = cmd[cmd["scheme"] == scheme].set_index("scene")
+            base = c.loc["пусто", "diff_hz"]
+            nz = float(c["diff_noise_hz"].mean())
+            print(f"\n  {scheme}: контроль {base:+.2f} Гц, типичный шум {nz:.2f} Гц")
+            for k in names:
+                if k == "пусто":
+                    continue
+                d = c.loc[k, "diff_hz"] - base
+                print(f"    {k:<16s} сдвиг команды {d:+6.2f} Гц = "
+                      f"{abs(d) / max(nz, 1e-9):>5.1f} шума"
+                      f"{'   <- значимо' if abs(d) > 3 * nz else ''}")
+
+    np.savez(out("hybrid_vision_raw.npz"),
+             **{f"lc|{s}|{k}|{h}": res[(s, k)][h] for s in ("гибрид", "старая схема")
+                for k in names for h in (0, 1)},
+             **{f"dn|{s}|{k}|{h}": res_dn[(s, k)][h] for s in ("гибрид", "старая схема")
+                for k in names for h in (0, 1)})
 
     df = pd.DataFrame(rows)
     df.to_csv(out("hybrid_vision_tests.csv"), index=False)
@@ -338,9 +456,12 @@ def main():
     print("  неверно и весь опыт недействителен.")
     print("  Если потолок около нуля, читать нечего: измерение не разрешает")
     print("  даже сцену от неё самой, и любые числа ниже — шум.")
-    for lab in ("толстый против двух тонких", "выше против ниже"):
-        h = df[(df["scheme"] == "гибрид") & (df["test"] == lab)]
-        o = df[(df["scheme"] == "старая схема") & (df["test"] == lab)]
+    for where in df["readout"].unique():
+      print(f"\n  === {where} ===")
+      for _, _, lab in PAIRS:
+        d_ = df[df["readout"] == where]
+        h = d_[(d_["scheme"] == "гибрид") & (d_["test"] == lab)]
+        o = d_[(d_["scheme"] == "старая схема") & (d_["test"] == lab)]
         if not len(h) or not len(o):
             continue
         hc, oc = float(h["corr"].iloc[0]), float(o["corr"].iloc[0])
@@ -349,17 +470,24 @@ def main():
         # выходит за её собственный потолок по модулю: иначе это её шум, а не
         # различение. Именно так и провалился первый заход теста про толстый
         # столб — там |-0.36| превысило потолок 0.30.
-        old_sees = abs(oc) > op
-        hyb_sees = hc < 0.5 * hp and hp > 0.5
-        if hyb_sees and not old_sees:
-            verdict = "ГИБРИД РАЗЛИЧАЕТ, СТАРАЯ НЕТ"
-        elif old_sees:
+        # Порядок проверок важен. Сперва потолок: если он около нуля, то
+        # считывание вообще не воспроизводит сцену саму собой, и никакие
+        # корреляции с ним читать нельзя. Первая версия этого не проверяла и
+        # на отрицательном потолке старой схемы (-0.033) печатала «тест
+        # недействителен», хотя недействительным было измерение, а не тест.
+        if hp <= 0.2:
+            verdict = (f"на этом считывании мерить нечем: потолок {hp:.2f}, "
+                       "сцена не воспроизводит саму себя")
+        elif op <= 0.2:
+            verdict = ("ГИБРИД РАЗЛИЧАЕТ; у старой схемы потолок около нуля, "
+                       "то есть она вообще не несёт сценной информации")
+        elif abs(oc) > op:
             verdict = ("сцены не уравнены по яркости: старая схема реагирует "
                        "сильнее собственного потолка — тест недействителен")
-        elif not hyb_sees:
-            verdict = "не различает ни одна"
+        elif hc < 0.5 * hp:
+            verdict = "ГИБРИД РАЗЛИЧАЕТ, СТАРАЯ НЕТ"
         else:
-            verdict = "вывод неоднозначен"
+            verdict = "не различает ни одна"
         print(f"\n  {lab}: гибрид {hc:+.3f} при потолке {hp:.3f}, "
               f"старая {oc:+.3f} при потолке {op:.3f}")
         print(f"    -> {verdict}")

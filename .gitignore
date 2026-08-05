@@ -62,3 +62,7 @@ output/hvp*.log
 # по-нейронное производное от аннотаций FlyWire — та же причина, что выше.
 # Сводка по типам (column_assignment_stats.csv) — агрегат, её держим.
 output/column_assignment.csv
+
+# Сырые массивы прогонов гибрида: по-нейронные частоты, производное от
+# аннотаций FlyWire. Пересчитывается прогоном.
+output/hybrid_vision_raw.npz
