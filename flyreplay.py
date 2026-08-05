@@ -116,7 +116,30 @@ class Recorder:
         return path
 
 
-def eye_view(sim: Simulation, fly_name: str, step: int = 1) -> np.ndarray:
+def strip_pixels(id_map, om_strip_eye, n_strips):
+    """Номер полосы для каждого пикселя картинки глаза и для каждой её колонки.
+
+    Полосы режутся по квантилям координаты омматидия, а сетка гексагональная,
+    поэтому у границы омматидии соседних полос перемежаются и чистой
+    вертикальной линии не выходит: диапазоны колонок перекрываются (у левого
+    глаза полоса 0 занимает 0-147, полоса 1 — 129-233). Поэтому граница
+    рисуется попиксельно, а подпись под мозаикой — по преобладающей в колонке
+    полосе. Так подпись стоит ровно под своим куском сетчатки.
+    """
+    # int64 обязателен: карта хранится в uint16, и 0 - 1 там уходит в 65535.
+    ids = id_map.astype(np.int64)
+    sp = np.where(ids > 0, om_strip_eye[np.clip(ids - 1, 0, None)], -1)
+    col = np.full(sp.shape[1], -1, int)
+    for c in range(sp.shape[1]):
+        v = sp[:, c]
+        v = v[v >= 0]
+        if v.size:
+            col[c] = np.bincount(v, minlength=n_strips).argmax()
+    return sp, col
+
+
+def eye_view(sim: Simulation, fly_name: str, step: int = 1,
+             strips=None, id_map=None) -> np.ndarray:
     """Что видят глаза: 721 омматидий на глаз, серым, левый | правый.
 
     Два канала омматидия (yellow/pale) складываются: ненулевой у него ровно
@@ -128,13 +151,33 @@ def eye_view(sim: Simulation, fly_name: str, step: int = 1) -> np.ndarray:
     tools/visual_field_map.py; здесь она НЕ показана, рисуется сырая мозаика.
 
     step прореживает картинку для оверлея в окне: 512x904 в углу не нужны.
+
+    strips (карта (2, 721) из tools/visual_field_map.py) и id_map включают
+    разметку на полосы: жёлтые границы и голубая метка «перёд». Границы
+    считаются на УЖЕ прореженной картинке — линия в один пиксель при step=3
+    иначе просто не попала бы в выборку.
     """
     r = sim.get_ommatidia_readouts(fly_name)                    # (2, 721, 2)
     eyes = [sim.retina.hex_pxls_to_human_readable(r[k].sum(axis=1), color_8bit=True)
             for k in (0, 1)]
     gap = np.full((eyes[0].shape[0], 4), 255, np.uint8)
     gray = np.hstack([eyes[0], gap, eyes[1]])[::step, ::step]
-    return np.repeat(gray[:, :, None], 3, axis=2)
+    img = np.repeat(gray[:, :, None], 3, axis=2)
+    if strips is None or id_map is None:
+        return img
+
+    n_strips = int(np.asarray(strips).max()) + 1
+    sp = [strip_pixels(id_map, np.asarray(strips)[k], n_strips)[0] for k in (0, 1)]
+    void = np.full((sp[0].shape[0], 4), -1, int)
+    spa = np.hstack([sp[0], void, sp[1]])[::step, ::step]
+    edge = np.zeros(spa.shape, bool)
+    edge[:, 1:] = (spa[:, 1:] != spa[:, :-1]) & (spa[:, 1:] >= 0) & (spa[:, :-1] >= 0)
+    img[edge] = (255, 220, 0)
+    # Метка «перёд»: у левого глаза она справа, у правого слева — глаза
+    # зеркальны по азимуту, и в окне это должно быть видно так же, как в mp4.
+    front = np.zeros((6, spa.shape[1], 3), np.uint8)
+    front[:, spa.max(axis=0) == n_strips - 1] = (0, 200, 255)
+    return np.vstack([img, front])
 
 
 def flight_entry(cam, frame: int) -> dict:

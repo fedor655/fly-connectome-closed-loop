@@ -56,6 +56,10 @@ def main():
     ap.add_argument("npz", help="запись прогона (output/*_traj.npz)")
     ap.add_argument("--speed", type=float, default=0.2,
                     help="доля реального времени на старте (0.2 = замедление в 5 раз)")
+    ap.add_argument("--strips", action="store_true",
+                    help="разметить оверлей с глазами на полосы поля зрения: "
+                         "жёлтые границы и голубая метка «перёд». Полосы те же, "
+                         "что уходят в мозг в режиме --spatial")
     ap.add_argument("--flight", default=None,
                     help="куда писать полёт камеры (по умолчанию рядом с npz)")
     ap.add_argument("--flight-fps", type=float, default=30.0,
@@ -73,6 +77,14 @@ def main():
     frame_dt = float(z["timestep"]) * int(z["every"])
     flight_path = args.flight or str(Path(args.npz).with_name(
         Path(args.npz).stem.replace("_traj", "") + "_flight.json"))
+
+    vfm_strips = vfm_idmap = None
+    if args.strips:
+        # Ленивый импорт: без --strips просмотрщик не должен читать коннектом.
+        from tools.visual_field_map import OMMATIDIA_MAP, load_or_build
+        vfm_strips = load_or_build()["ommatidia"]
+        vfm_idmap = np.load(OMMATIDIA_MAP)
+        print("оверлей с глазами размечен на полосы поля зрения")
 
     sim = build_scene(z["pillar"], z["geom_pos"],
                       light=float(z["light"]) if "light" in z else 1.0)
@@ -166,7 +178,8 @@ def main():
             if state["eyes"] and now >= next_eyes:
                 next_eyes = now + 0.1        # 10 Гц: readout стоит около 10 мс
                 try:
-                    eyes_img = eye_view(sim, fly_name, step=3)
+                    eyes_img = eye_view(sim, fly_name, step=3,
+                                        strips=vfm_strips, id_map=vfm_idmap)
                 except Exception as e:
                     # Глаза рисуются вторым офскрин-контекстом поверх живого
                     # окна. Если драйвер этого не даёт — выключаем показ, а не

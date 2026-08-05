@@ -21,7 +21,8 @@ import imageio.v2 as imageio
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flyreplay import apply_flight, build_scene, eye_view  # noqa: E402
+from flyreplay import (  # noqa: E402
+    apply_flight, build_scene, eye_view, strip_pixels)
 
 import mujoco  # noqa: E402
 
@@ -47,28 +48,6 @@ def eyes_panel(retina, gray, mu, lo, hi):
         cols.append(np.vstack([mosaic, rule, flat, rule, meter]))
     gap = np.full((cols[0].shape[0], 4), 255, np.uint8)
     return np.repeat(np.hstack([cols[0], gap, cols[1]])[:, :, None], 3, axis=2)
-
-
-def strip_pixels(id_map, om_strip_eye, n_strips):
-    """Номер полосы для каждого пикселя картинки глаза и для каждой её колонки.
-
-    Полосы режутся по квантилям координаты омматидия, а сетка гексагональная,
-    поэтому у границы омматидии соседних полос перемежаются и чистой
-    вертикальной линии не выходит: диапазоны колонок перекрываются (у левого
-    глаза полоса 0 занимает 0-147, полоса 1 — 129-233). Поэтому граница
-    рисуется попиксельно, а подпись под мозаикой — по преобладающей в колонке
-    полосе. Так подпись стоит ровно под своим куском сетчатки.
-    """
-    # int64 обязателен: карта хранится в uint16, и 0 - 1 там уходит в 65535.
-    ids = id_map.astype(np.int64)
-    sp = np.where(ids > 0, om_strip_eye[np.clip(ids - 1, 0, None)], -1)
-    col = np.full(sp.shape[1], -1, int)
-    for c in range(sp.shape[1]):
-        v = sp[:, c]
-        v = v[v >= 0]
-        if v.size:
-            col[c] = np.bincount(v, minlength=n_strips).argmax()
-    return sp, col
 
 
 def strips_panel(retina, gray, om_strip, id_map, rates, hz_max, front_strip, draw=None):
