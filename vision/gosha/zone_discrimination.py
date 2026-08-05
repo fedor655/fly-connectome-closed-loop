@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from flypaths import add_fly_brain_to_path, out  # noqa: E402
 from tools.zone_probe import descending_indices  # noqa: E402
 from tools.replicate_vision import welch  # noqa: E402

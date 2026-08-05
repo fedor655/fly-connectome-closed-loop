@@ -4,7 +4,7 @@
 участки поля зрения. Мозг не запускается: сцена, глаза, арифметика подачи —
 секунды, а не минуты.
 
-    .venv/bin/python test_spatial.py
+    .venv/bin/python vision/gosha/test_spatial.py
 """
 from __future__ import annotations
 
@@ -13,9 +13,9 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from flyreplay import build_scene  # noqa: E402
-from tools.visual_field_map import N_STRIPS, load_or_build  # noqa: E402
+from vision.gosha.visual_field_map import N_STRIPS, load_or_build  # noqa: E402
 from closed_loop_vision import strip_intensity  # noqa: E402
 
 

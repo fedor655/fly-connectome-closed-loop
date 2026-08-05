@@ -29,6 +29,17 @@ output/dn_population_cache.npz
 output/dn_population_readout.csv
 output/dn_population_selected.csv
 
+# То же самое для отбора под драйв через стык с flyvis.
+output/dn_population_seam.csv
+output/dn_population_seam_selected.csv
+output/dn_population_seam_cache.npz
+
+# Карта поля зрения по связям: root_id и позиция для 96 331 нейрона, то есть
+# по-нейронное производное от тех же аннотаций. 6.3 МБ, пересчитывается за
+# четыре минуты. Сводка по типам (visual_field_map_stats.csv) — агрегат, её
+# держим в репозитории.
+output/visual_field_map.csv
+
 # Захваченный stdout прогонов: шум EGL при завершении интерпретатора,
 # полезное содержимое и так лежит в CSV
 output/*.log
@@ -47,3 +58,15 @@ output/visual_field_map.npz
 
 # Рабочий каталог subagent-driven-development (черновики, журнал, дифы ревью)
 .superpowers/
+
+# Промежуточные логи прогонов гибрида
+output/hvp*.log
+
+# Разложение колонок flyvis по нейронам: root_id на каждую строку, то есть
+# по-нейронное производное от аннотаций FlyWire — та же причина, что выше.
+# Сводка по типам (column_assignment_stats.csv) — агрегат, её держим.
+output/column_assignment.csv
+
+# Сырые массивы прогонов гибрида: по-нейронные частоты, производное от
+# аннотаций FlyWire. Пересчитывается прогоном.
+output/hybrid_vision_raw.npz

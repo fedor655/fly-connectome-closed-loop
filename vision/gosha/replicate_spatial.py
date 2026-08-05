@@ -28,11 +28,11 @@ import numpy as np
 import pandas as pd
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from flypaths import out  # noqa: E402
 from closed_loop_vision import load_brain_assets, run_trial  # noqa: E402
 from tools.replicate_vision import welch  # noqa: E402
-from tools.visual_field_map import load_or_build  # noqa: E402
+from vision.gosha.visual_field_map import load_or_build  # noqa: E402
 
 # Ключ (латиницей) идёт в имена файлов, подпись — в вывод. Сцены оси azimuth
 # образуют ДВЕ пары плюс общий контроль:

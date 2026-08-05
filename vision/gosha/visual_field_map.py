@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from flypaths import ANNOTATIONS, OUTPUT_DIR, add_fly_brain_to_path, out  # noqa: E402
 
 add_fly_brain_to_path()
