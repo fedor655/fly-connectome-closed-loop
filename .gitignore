@@ -44,3 +44,6 @@ __pycache__/
 # Производное от аннотаций FlyWire
 output/retina_zone_map.npz
 output/visual_field_map.npz
+
+# Рабочий каталог subagent-driven-development (черновики, журнал, дифы ревью)
+.superpowers/
