@@ -36,11 +36,36 @@ class PillarWorld(FlatGroundWorld):
     z и h нужны сценам этапа 2 запасного варианта: объект вверху против объекта
     внизу проверяет ось элевации. По умолчанию столб стоит на грунте во всю
     высоту — ровно как раньше, поэтому вызов PillarWorld(x, y) не меняется.
+
+    light гасит мир. В сцене нет ни одного источника света (nlight = 0), всё
+    освещение даёт headlight MuJoCo плюс собственные цвета неба и грунта,
+    поэтому выключение headlight роняет яркость глаз всего с 0.55 до 0.46.
+    По-настоящему темно становится, если погасить сами текстуры, а они
+    процедурные и задаются ДО компиляции: skybox и checker строятся из rgb1/rgb2.
+
+    Измерено, средняя яркость омматидиев при разном light:
+        1.00 -> 0.553/0.578    0.50 -> 0.280/0.292    0.20 -> 0.106/0.108
+        0.05 -> 0.032/0.030    0.00 -> 0.010/0.007
+
+    При light = 1.0 ассеты не трогаются вовсе, поэтому прежние сцены
+    воспроизводятся побитово (это проверяет test_replay.py).
     """
 
     def __init__(self, x: float, y: float,
-                 z: float | None = None, h: float = PILLAR_H) -> None:
+                 z: float | None = None, h: float = PILLAR_H,
+                 light: float = 1.0) -> None:
         super().__init__(name="pillar_world", half_size=300)
+        if light != 1.0:
+            for t in self.mjcf_root.textures:
+                if t.name == "skybox":
+                    t.rgb1 = [light] * 3
+                    t.rgb2 = [light] * 3
+                elif t.name == "checker":
+                    t.rgb1 = [light * 0.3] * 3
+                    t.rgb2 = [light * 0.4] * 3
+            for g in self.mjcf_root.worldbody.geoms:
+                if g.name == "ground_plane":
+                    g.rgba = [light * 0.5, light * 0.5, light * 0.5, 1.0]
         self.mjcf_root.worldbody.add_geom(
             type=GEOM_TYPES["cylinder"], name="pillar",
             size=[PILLAR_R, h / 2, 0.0],

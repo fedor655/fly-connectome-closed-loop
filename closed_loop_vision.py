@@ -89,6 +89,36 @@ TARGET_CMD_AT_BASE = 0.65
 # процентов, без усиления модуляция тонет.
 DARK_GAIN = 6.0
 
+# --- Режим «свет», в котором ходьбу вызывает среда, а не наша константа ---
+#
+# В обычном режиме муха идёт потому, что мы вливаем ей постоянные lc_base = 60 Гц.
+# Это выдуманный тонический вход: он не зависит ни от чего в мире, и убрать его
+# из мира нельзя. В режиме «свет» константы нет вовсе, а частота стимуляции
+# складывается из двух величин, обе снятые с глаз:
+#
+#   B     — средняя яркость по всем омматидиям обоих глаз, то есть освещённость
+#           мира. Она задаёт ОБЩИЙ тонус: светло — иди, темно — стой.
+#   shade — насколько полоса темнее средней яркости. Задаёт ПОВОРОТ: полоса,
+#           закрытая столбом, поднимает частоту на своей стороне, и муха
+#           отворачивается — тот же знак, что в подтверждённом избегании.
+#
+# Ни одного деления на измеренную базовую яркость здесь нет, поэтому в тёмной
+# сцене обе величины уходят в ноль сами, а не через клип около нуля.
+#
+# Усиления выведены из замеров, а не подобраны:
+#   B при свете 1.0 равна 0.55-0.59, при свете 0.0 равна 0.007-0.010;
+#   LIGHT_HZ = 100 даёт при полном свете 55-59 Гц, то есть ту же рабочую точку,
+#   что прежние lc_base = 60, а в темноте 0.7-1.0 Гц.
+#   shade передней полосы при столбе слева: 0.074 на 14 мм, 0.139 на 10 мм,
+#   0.292 на 6 мм, против 0.012 без столба. SHADE_HZ = 170 даёт прибавку
+#   13 / 24 / 50 Гц по мере приближения, сравнимо с прежними lc_span * dark.
+LIGHT_HZ = 100.0
+SHADE_HZ = 170.0
+# Норма каналов в режиме «свет» меряется на ФИКСИРОВАННОЙ частоте, одной и той
+# же для светлой и тёмной сцены. Иначе калибровка подстроилась бы под каждую
+# сцену отдельно и съела бы именно тот эффект, который мы измеряем.
+LIGHT_CAL_HZ = 60.0
+
 # Низкочастотный фильтр яркости каждого глаза.
 #
 # При ходьбе тело качает по крену, яркость глаз колеблется с периодом 45 мс
@@ -234,7 +264,7 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
               cycles=100, autocal=15, cal_brain_ms=3000.0, seed=0,
               tau_eye=TAU_EYE_MS, tau_cmd=TAU_CMD_MS,
               lc_base=None, lc_span=None, spatial=False,
-              pillar_z=None, pillar_h=None,
+              pillar_z=None, pillar_h=None, drive="tonic", light=1.0,
               video_path=None, traj_path=None, traj_every=10, verbose=True):
     """Один прогон. Возвращает (DataFrame лога, словарь сводки)."""
     px = FAR_AWAY if no_pillar else pillar_x
@@ -291,8 +321,8 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
     fly = make_locomotion_fly()
     fly.add_vision()
     cam = fly.add_tracking_camera(name="trackcam") if video_path else None
-    world = (PillarWorld(px, py) if pillar_z is None
-             else PillarWorld(px, py, z=pillar_z, h=pillar_h))
+    world = (PillarWorld(px, py, light=light) if pillar_z is None
+             else PillarWorld(px, py, z=pillar_z, h=pillar_h, light=light))
     world.add_fly(fly, spawn_position=[0.0, 0.0, 0.5],
                   spawn_rotation=Rotation3D("quat", [1, 0, 0, 0]),
                   add_ground_contact_sensors=True)
@@ -376,8 +406,12 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
 
     n_cal = int(cal_brain_ms / SYNC_MS)
     sp_l = sp_r = 0.0
+    # В режиме «свет» норма меряется на фиксированной частоте, одинаковой для
+    # светлой и тёмной сцены: иначе калибровка подстроилась бы под освещённость
+    # и сама съела бы измеряемый эффект.
+    cal_hz = LIGHT_CAL_HZ if drive == "light" else lc_base
     with torch.no_grad():
-        flat = np.full(n_strips, lc_base)
+        flat = np.full(n_strips, cal_hz)
         for w in range(n_cal):
             a, b = step_brain(flat, flat)
             if w >= n_cal // 4:                # четверть на переходный процесс
@@ -405,11 +439,20 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
                 eye_filt = inten_raw.copy()
             else:
                 eye_filt += alpha_eye * (inten_raw - eye_filt)
-            rel = (baseline - eye_filt) / np.maximum(baseline, 1e-6)
-            dark = np.clip(rel * DARK_GAIN, 0.0, 1.0)          # (2, n_strips)
+            if drive == "light":
+                # Ходьбу вызывает среда: B — освещённость мира, которую видят
+                # глаза. Никакой константы, никакого деления на базовую яркость.
+                B = float(eye_filt.mean())
+                shade = np.clip(B - eye_filt, 0.0, None)        # (2, n_strips)
+                dark = shade                                    # в лог под тем же именем
+                rate_l = LIGHT_HZ * B + SHADE_HZ * shade[0]
+                rate_r = LIGHT_HZ * B + SHADE_HZ * shade[1]
+            else:
+                rel = (baseline - eye_filt) / np.maximum(baseline, 1e-6)
+                dark = np.clip(rel * DARK_GAIN, 0.0, 1.0)          # (2, n_strips)
 
-            rate_l = lc_base + lc_span * dark[0]                # (n_strips,)
-            rate_r = lc_base + lc_span * dark[1]
+                rate_l = lc_base + lc_span * dark[0]                # (n_strips,)
+                rate_r = lc_base + lc_span * dark[1]
             hz_l, hz_r = step_brain(rate_l, rate_r)
 
             if ema_l is None:
@@ -476,6 +519,7 @@ def run_trial(assets, device, *, pillar_y=3.0, no_pillar=False, pillar_x=12.0,
         "seed": seed, "no_pillar": bool(no_pillar), "pillar_y": None if no_pillar else pillar_y,
         "readout": assets.get("readout", "?"), "stim": assets.get("stim", "?"),
         "spatial": bool(spatial), "n_strips": n_strips,
+        "drive": drive, "light": float(light),
         "n_read_left": len(read_l), "n_read_right": len(read_r),
         "turn_deg": turn, "path_mm": float(np.hypot(dx, dy)),
         "dx_mm": float(dx), "dy_mm": float(dy),
@@ -523,6 +567,12 @@ def main():
                          "или только в LC9")
     ap.add_argument("--lc-base", type=float, default=None)
     ap.add_argument("--lc-span", type=float, default=None)
+    ap.add_argument("--drive", choices=("tonic", "light"), default="tonic",
+                    help="tonic — постоянная стимуляция lc_base (муха идёт "
+                         "потому, что мы её так стимулируем); light — тонус "
+                         "берётся из освещённости мира, которую видят глаза")
+    ap.add_argument("--light", type=float, default=1.0,
+                    help="освещённость мира от 0 (темно) до 1 (штатная)")
     ap.add_argument("--spatial", action="store_true",
                     help="подавать яркость по полосам поля зрения, а не одним "
                          "числом на глаз")
@@ -546,6 +596,7 @@ def main():
                       cal_brain_ms=args.cal_brain_ms, seed=args.seed,
                       tau_eye=args.tau_eye, tau_cmd=args.tau_cmd,
                       lc_base=args.lc_base, lc_span=args.lc_span,
+                      drive=args.drive, light=args.light,
                       spatial=args.spatial,
                       video_path=video_path, traj_path=traj_path,
                       traj_every=args.record_every)
