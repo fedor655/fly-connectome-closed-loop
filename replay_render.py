@@ -228,7 +228,7 @@ def main():
 
     if eyes and args.strips:
         # Импорты ленивые: без --strips просмотрщик не должен тянуть torch.
-        from tools.visual_field_map import OMMATIDIA_MAP, load_or_build
+        from vision.gosha.visual_field_map import OMMATIDIA_MAP, load_or_build
         from closed_loop_vision import LIGHT_HZ, SHADE_HZ, strip_intensity
 
         vfm = load_or_build()

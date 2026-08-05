@@ -51,7 +51,7 @@ from benchmark import path_comp, path_con, path_wt  # noqa: E402
 import run_pytorch as rp  # noqa: E402
 
 from flyreplay import FAR_AWAY, PillarWorld, Recorder  # noqa: E402
-from tools.visual_field_map import N_STRIPS, load_or_build  # noqa: E402
+from vision.gosha.visual_field_map import N_STRIPS, load_or_build  # noqa: E402
 from flygym.simulation import Simulation  # noqa: E402
 from flygym.utils.math import Rotation3D  # noqa: E402
 from flygym_demo.complex_terrain import (  # noqa: E402

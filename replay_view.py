@@ -81,7 +81,7 @@ def main():
     vfm_strips = vfm_idmap = None
     if args.strips:
         # Ленивый импорт: без --strips просмотрщик не должен читать коннектом.
-        from tools.visual_field_map import OMMATIDIA_MAP, load_or_build
+        from vision.gosha.visual_field_map import OMMATIDIA_MAP, load_or_build
         vfm_strips = load_or_build()["ommatidia"]
         vfm_idmap = np.load(OMMATIDIA_MAP)
         print("оверлей с глазами размечен на полосы поля зрения")
